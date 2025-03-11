@@ -1,12 +1,15 @@
 from typing import override
 from PyQt6.QtWidgets import (
+    QGraphicsPolygonItem,
     QGraphicsView,
     QGraphicsScene,
     QGraphicsEllipseItem,
     QGraphicsItem,
 )
-from PyQt6.QtCore import Qt, QPointF, QRectF, QEvent
-from PyQt6.QtGui import QPixmap, QBrush, QColor, QPolygonF, QPen, QPainter
+from PyQt6.QtCore import Qt, QPointF, QRectF, QEvent, pyqtSignal
+from PyQt6.QtGui import QCursor, QPixmap, QBrush, QColor, QPolygonF, QPen, QPainter
+
+from dataclasses import dataclass
 
 
 class VertexItem(QGraphicsEllipseItem):
@@ -14,8 +17,7 @@ class VertexItem(QGraphicsEllipseItem):
 
     def __init__(self, x, y, width, height):
         super().__init__(x, y, width, height)
-        self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, True)
-        self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable, True)
+        self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemSendsGeometryChanges, True)
 
     def itemChange(self, change, value):
         if change == QGraphicsItem.GraphicsItemChange.ItemPositionChange and self.data(
@@ -25,22 +27,25 @@ class VertexItem(QGraphicsEllipseItem):
             polygon_item = self.data(0)
             index = self.data(1)
             poly = polygon_item.polygon()
-            # poly[index] = value
-            poly[index] = (
-                new_pos
-                + new_pos
-                + QPointF(self.rect().width() / 2, self.rect().height() / 2)
-            )
+            poly[index] = value
             polygon_item.setPolygon(poly)
             return new_pos
         return super().itemChange(change, value)
 
-    def mousePressEvent(self, event):
-        print("pressed")
-        return super().mousePressEvent(event)
+
+@dataclass
+class MaskData(object):
+    def __init__(self, mask_id: int, points: list, lines: list, poly):
+        self.id = mask_id
+        self.lines = lines
+        self.points = points
+        self.poly = poly
 
 
 class ImageViewer(QGraphicsView):
+
+    object_added = pyqtSignal(MaskData)
+
     def __init__(self):
         super().__init__()
         self.image_scene = QGraphicsScene()
@@ -52,6 +57,7 @@ class ImageViewer(QGraphicsView):
         self.boxes = []  # List of [start, end] QPointF pairs for box annotations
         self.current_box = None  # Temporary box during drawing
         self.polygon_items = []  # List of QGraphicsPolygonItem for model results
+        self.mask_id = 0
         # self.mode = "Points"  # Current interaction mode: "point" or "box"
 
         self.temp_points = []  # Temporary points for current polygon
@@ -59,8 +65,11 @@ class ImageViewer(QGraphicsView):
         self.temp_polygon = None  # Temporary shaded polygon during drawing
         self.mode = "model"
         self.current_shape = None  # Current shape for manual annotation
-        self.prompt_mode = "points"
+        self.prev_shape = None  # Previous shape for pressing N
+        self.shaded_poly = None
+        self.point_to_shape: dict = {}
 
+        self.dragging_vertex = None
         # Mode selection (could be extended via UI buttons)
         # For simplicity, toggle with right-click in this example
         self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
@@ -91,6 +100,7 @@ class ImageViewer(QGraphicsView):
     def set_shape(self, shape):
         if self.mode == "manual":
             self.current_shape = shape
+            self.setCursor(Qt.CursorShape.CrossCursor)
             self.clear_temp()
 
     def clear(self):
@@ -111,7 +121,7 @@ class ImageViewer(QGraphicsView):
     def display_polygons(self, polygons):
         """Display polygons returned by the model with editable vertices."""
         if self.image_item:
-            self.image_item.setOpacity(0.5)  # Lower image opacity
+            self.image_item.setOpacity(0.5)
         self.polygon_items = []
         for poly in polygons:
             qpoly = QPolygonF([QPointF(x, y) for x, y in poly])
@@ -123,7 +133,8 @@ class ImageViewer(QGraphicsView):
             self.polygon_items.append(polygon_item)
             # Add movable vertices
             for i, point in enumerate(qpoly):
-                vertex_item = VertexItem(point.x() - 3, point.y() - 3, 12, 12)
+                vertex_item = VertexItem(0, 0, 20, 20)
+                vertex_item.setPos(point.x() - 3, point.y() - 3)
                 vertex_item.setBrush(Qt.GlobalColor.blue)
                 vertex_item.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable)
                 vertex_item.setData(0, polygon_item)  # Reference to polygon
@@ -138,31 +149,33 @@ class ImageViewer(QGraphicsView):
             else:
                 item.setBrush(QBrush(QColor(0, 255, 0, 128)))  # Green for others
 
-    def setMousePrompt(self, text):
-        self.prompt_mode = text
-
     def mousePressEvent(self, event):
         """Handle mouse press for point or box annotation."""
         pos = self.mapToScene(event.pos())
-        if (
-            event.button() == Qt.MouseButton.LeftButton
-            and self.mode == "manual"
-            and self.current_shape != None
-        ):
-            self.temp_points.append(pos)
-            ellipse = self.image_scene.addEllipse(
-                pos.x() - 2, pos.y() - 2, 6, 6, brush=Qt.GlobalColor.red
-            )
-            self.temp_ellipses.append(ellipse)
-            if len(self.temp_points) > 1:
-                line = self.image_scene.addLine(
-                    self.temp_points[-2].x(),
-                    self.temp_points[-2].y(),
-                    pos.x(),
-                    pos.y(),
-                    QPen(Qt.GlobalColor.black),
+        if event.button() == Qt.MouseButton.LeftButton and self.mode == "manual":
+            # "NORMAL" mode(like vim). No shape selected.
+            # Check if an old polygon's ellipses is clicked for edit
+            if self.current_shape is None:
+                item = self.image_scene.itemAt(pos, self.transform())
+                if isinstance(item, VertexItem):
+                    self.dragging_vertex = item
+
+            elif self.current_shape == "polygon":
+                self.temp_points.append(pos)
+                ellipse = self.image_scene.addEllipse(
+                    pos.x() - 6, pos.y() - 6, 15, 15, brush=Qt.GlobalColor.red
                 )
-                self.temp_lines.append(line)
+                self.temp_ellipses.append(ellipse)
+                # LOOK AT THIS
+                if len(self.temp_points) == 2:
+                    line = self.image_scene.addLine(
+                        self.temp_points[-2].x(),
+                        self.temp_points[-2].y(),
+                        pos.x(),
+                        pos.y(),
+                        QPen(Qt.GlobalColor.black),
+                    )
+                    self.temp_lines.append(line)
         elif self.mode == "box":
             self.current_box = [pos, pos]
         elif event.button() == Qt.MouseButton.RightButton:
@@ -173,6 +186,10 @@ class ImageViewer(QGraphicsView):
 
     def mouseReleaseEvent(self, event):
         """Undo the last selected point on right-click."""
+        if event.button() == Qt.MouseButton.LeftButton:
+            if self.dragging_vertex:
+                self.dragging_vertex = None
+                self.current_shape = None
         if (
             event.button() == Qt.MouseButton.RightButton
             and self.mode == "manual"
@@ -188,23 +205,19 @@ class ImageViewer(QGraphicsView):
                 self.image_scene.removeItem(self.temp_polygon)
 
             if len(self.temp_points) >= 2:
-            pos = self.mapToScene(event.pos())
-            temp_poly = QPolygonF(self.temp_points + [pos])
-            self.temp_polygon = self.image_scene.addPolygon(
-                temp_poly,
-                pen=QPen(Qt.GlobalColor.black),
-                brush=QBrush(QColor(255, 255, 0, 128)),
-            )
+                pos = self.mapToScene(event.pos())
+                temp_poly = QPolygonF(self.temp_points + [pos])
+                self.temp_polygon = self.image_scene.addPolygon(
+                    temp_poly,
+                    pen=QPen(Qt.GlobalColor.black),
+                    brush=QBrush(QColor(255, 255, 0, 128)),
+                )
         return super().mouseReleaseEvent(event)
 
     def mouseMoveEvent(self, event):
+        pos = self.mapToScene(event.pos())
         """Spy on mouse move events from the main window."""
-        if (
-            event.type() == QEvent.Type.MouseMove
-            and self.mode == "manual"
-            and len(self.temp_points) >= 2
-        ):
-            pos = self.mapToScene(event.pos())
+        if self.current_shape == "polygon" and len(self.temp_points) >= 2:
             if self.temp_polygon:
                 self.image_scene.removeItem(self.temp_polygon)
 
@@ -214,38 +227,89 @@ class ImageViewer(QGraphicsView):
                 pen=QPen(Qt.GlobalColor.black),
                 brush=QBrush(QColor(255, 255, 0, 128)),
             )
+        elif self.current_shape is None:
+            if self.dragging_vertex:
+                rect = self.dragging_vertex.rect()
+                self.dragging_vertex.setPos(pos.x() - 5, pos.y() - 5)
+                self.image_scene.update()
+                # self.dragging_vertex.setVisible(True)
+            else:
+                item = self.image_scene.itemAt(pos, self.transform())
+                if isinstance(item, QGraphicsPolygonItem):
+                    item.setBrush(QColor(255, 255, 0, 128))
+                    self.shaded_poly = item
+                elif self.shaded_poly is not None:
+                    self.shaded_poly.setBrush(Qt.GlobalColor.transparent)
+
         return super().mouseMoveEvent(event)
 
     def keyPressEvent(self, event):
-        if event.key() == Qt.Key.Key_N and self.mode == "manual" and self.temp_points:
-            # Remove temporary polygon and lines if they exist
-            if self.temp_polygon:
-                self.image_scene.removeItem(self.temp_polygon)
-                self.temp_polygon = None
+        if self.mode == "manual":
+            # Finalize current temp_poly, and add it to objects
+            if self.prev_shape is not None and self.current_shape is None:
+                self.current_shape = self.prev_shape
+                self.setCursor(Qt.CursorShape.CrossCursor)
 
-            # Create final polygon
-            final_poly = QPolygonF(self.temp_points)
-            polygon_item = self.image_scene.addPolygon(
-                final_poly,
-                pen=QPen(Qt.GlobalColor.black),
-                brush=QBrush(QColor(255, 255, 0, 128)),
-            )
-            self.polygon_items.append(polygon_item)
+            elif event.key() == Qt.Key.Key_N and self.temp_points:
+                if self.temp_polygon:
+                    self.image_scene.removeItem(self.temp_polygon)
+                    self.temp_polygon = None
 
-            # Clear temporary drawing data
-            for line in self.temp_lines:
-                self.image_scene.removeItem(line)
-            self.temp_lines = []
-            self.temp_points = []
+                # Create final polygon
+                final_poly = QPolygonF(self.temp_points)
+                polygon_item = self.image_scene.addPolygon(
+                    final_poly,
+                    pen=QPen(Qt.GlobalColor.black),
+                    # brush=QBrush(QColor(255, 255, 0, 128)),
+                )
+                self.polygon_items.append(polygon_item)
 
-            # Add movable vertices to the final polygon
-            for i, point in enumerate(final_poly):
-                vertex_item = VertexItem(point.x() - 3, point.y() - 3, 6, 6)
-                vertex_item.setBrush(Qt.GlobalColor.black)
-                vertex_item.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable)
-                vertex_item.setData(0, polygon_item)
-                vertex_item.setData(1, i)
-                self.image_scene.addItem(vertex_item)
+                # Clear temporary drawing data
+                for line in self.temp_lines:
+                    self.image_scene.removeItem(line)
+                for ellipse in self.temp_ellipses:
+                    self.image_scene.removeItem(ellipse)
+                # Update the points---> mask_id and mask_id--->mask store.
+                mask_data = MaskData(
+                    self.mask_id, self.temp_points, self.temp_lines, final_poly
+                )
+                self.mask_id += 1
+                # emit new mask to the object list
+                self.object_added.emit(mask_data)
+                self.temp_lines = []
+                self.temp_points = []
+                self.temp_ellipses = []
+
+                # Add movable vertices to the final polygon
+                for i, point in enumerate(final_poly):
+                    vertex_item = VertexItem(0, 0, 15, 15)
+                    vertex_item.setPos(point.x() - 5, point.y() - 5)
+                    vertex_item.setBrush(Qt.GlobalColor.black)
+                    vertex_item.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable)
+                    vertex_item.setData(0, polygon_item)
+                    vertex_item.setData(1, i)
+                    self.image_scene.addItem(vertex_item)
+                # reset states to NORMAL
+                self.prev_shape = self.current_shape
+                self.current_shape = None
+                self.setCursor(Qt.CursorShape.ArrowCursor)
+            # Remove the current temp poly upon pressing ESC
+            elif event.key() == Qt.Key.Key_Escape and self.temp_points:
+                if self.temp_polygon:
+                    self.image_scene.removeItem(self.temp_polygon)
+                    for line in self.temp_lines:
+                        self.image_scene.removeItem(line)
+                    for ellipse in self.temp_ellipses:
+                        self.image_scene.removeItem(ellipse)
+                    self.temp_polygon = None
+                    self.temp_lines = []
+                    self.temp_points = []
+                    self.temp_ellipses = []
+
+                # return to NORMAL mode
+                self.current_shape = None
+                self.setCursor(Qt.CursorShape.ArrowCursor)
+
         return super().keyPressEvent(event)
 
     def resizeEvent(self, event):

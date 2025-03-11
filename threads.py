@@ -1,4 +1,4 @@
-from PyQt6.QtCore import QThread, pyqtSignal
+from PyQt6.QtCore import QThread, pyqtSignal, QWaitCondition, QMutex
 import requests
 from PIL import Image
 from io import BytesIO
@@ -30,17 +30,40 @@ class ImageLocalLoaderThread(QThread):
     def __init__(
         self, image_paths: list, image_list: list = [], background_load_num=30
     ):
+        self.condition = QWaitCondition()
+        self.mutex = QMutex()
         super().__init__()
         self.paths = image_paths
+        self.index = 0
         self.background_load_num = min(background_load_num, len(image_paths))
         self.image_list = image_list
 
     def run(self):
-        image = Image.open(self.paths[0], "r")
+        full_len = len(self.paths)
+        ranges = range(0, full_len, self.background_load_num)
+        self.mutex.lock()
+        for idx in range(1, len(ranges)):
+            image = Image.open(self.paths[ranges[idx - 1]], "r")
+            self.image_loaded.emit(image)
+            self.image_list.extend(
+                [
+                    Image.open(path, "r")
+                    for path in self.paths[ranges[idx - 1] + 1 : ranges[idx]]
+                ]
+            )
+            self.condition.wait(self.mutex)
+            self.mutex.unlock()
+        # final batch
+        image = Image.open(self.paths[ranges[-1]], "r")
         self.image_loaded.emit(image)
-        for i in range(1, self.background_load_num):
-            self.image_list.append(Image.open(self.paths[i], "r"))
-        print ("done loading images")
+        self.image_list.extend(
+            [Image.open(self.paths[idx], "r") for idx in range(ranges[-1], full_len)]
+        )
+
+    def wake_up(self):
+        self.mutex.lock()
+        self.condition.wakeOne()
+        self.mutex.unlock()
 
 
 class ModelThread(QThread):
