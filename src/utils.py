@@ -36,3 +36,16 @@ def pil_to_qimage(pil_image):
     """Convert a PIL Image to a QImage."""
     qt_image = ImageQt.ImageQt(pil_image)
     return qt_image
+
+
+def read_colors(text_file):
+    color_dict = {}
+    with open(text_file, "r") as f:
+        for line in f:
+            line_cols = line.strip().split(" ")
+            color_dict[" ".join(line_cols[3:])] = (
+                int(line_cols[0]),
+                int(line_cols[1]),
+                int(line_cols[2]),
+            )
+    return color_dict

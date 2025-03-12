@@ -9,14 +9,20 @@
 
 
 from PyQt6 import QtCore, QtGui, QtWidgets
+from PyQt6.QtGui import QColor, QPalette
 
 
 class CustomListItemWidget(QtWidgets.QWidget):
-    def __init__(self, parent=None):
+    def __init__(self, labels: list = [], parent=None):
         super(CustomListItemWidget, self).__init__(parent)
+        self.labels = labels
+        # self.setAutoFillBackground(True)
+        # self.setStyleSheet("background-color: lightblue; border: 1px solid black;")
         self.setupUi()
 
-    def setupUi(self):
+    def setupUi(
+        self,
+    ):
         self.setObjectName("ObjectListItem")
 
         # Set size policy to expand horizontally
@@ -44,8 +50,8 @@ class CustomListItemWidget(QtWidgets.QWidget):
 
         self.label_combo_box = QtWidgets.QComboBox(self)
         self.label_combo_box.setObjectName("label_combo_box")
-        self.label_combo_box.addItem("RTU")
-        self.label_combo_box.addItem("Air-Cooled Chiller")
+        for label in self.labels:
+            self.label_combo_box.addItem(label)
         self.label_combo_box.setSizePolicy(
             QtWidgets.QSizePolicy.Policy.Expanding,  # This is the key change
             QtWidgets.QSizePolicy.Policy.Fixed,
@@ -62,15 +68,18 @@ class CustomListItemWidget(QtWidgets.QWidget):
         self.pin_button.setText("📌")
         self.horizontalLayout.addWidget(self.pin_button)
 
-        self.object_label.setText("Object")
-        self.shape_label.setText("Polygon")
-
         # Setting stretch factor for the widgets
         self.horizontalLayout.setStretch(0, 20)  # Labels get 20%
         self.horizontalLayout.setStretch(1, 5)  # Stretch gets 5%
         self.horizontalLayout.setStretch(2, 60)  # Combo box gets 60%
         self.horizontalLayout.setStretch(3, 8)  # Lock button gets 7.5%
         self.horizontalLayout.setStretch(4, 7)  # Pin button gets 7.5%
+
+    def setupFields(self, mask_id: int = 0, label: str = "RTU", shape_type="Polygon"):
+        self.object_label.setText(f"Object {mask_id}")
+        self.shape_label.setText(shape_type)
+
+        self.label_combo_box.setCurrentText(label)
 
 
 if __name__ == "__main__":

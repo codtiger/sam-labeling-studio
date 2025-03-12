@@ -20,14 +20,14 @@ from PyQt6.QtWidgets import (
     QListView,
     QPushButton,
 )
-from PyQt6.QtCore import QFile, Qt, QSize
-from PyQt6.QtGui import QPixmap, QIcon, QPainter, QAction
+from PyQt6.QtCore import QFile, Qt, QSize, QPoint
+from PyQt6.QtGui import QPixmap, QIcon, QPainter, QAction, QColor
 from PyQt6.QtSvg import QSvgRenderer
 
-from image_viewer import ImageViewer, MaskData
-from list_item_widget import CustomListItemWidget
-from threads import ImageLoaderThread, ModelThread, ImageLocalLoaderThread
-from utils import pil_to_qimage, ShapeDelegate
+from .image_viewer import ImageViewer, MaskData
+from .list_item_widget import CustomListItemWidget
+from .threads import ImageLoaderThread, ModelThread, ImageLocalLoaderThread
+from .utils import pil_to_qimage, ShapeDelegate, read_colors
 
 
 class DataSource(Enum):
@@ -50,6 +50,7 @@ class MainWindow(QMainWindow):
         self.resize(1920, 1080)
 
         config = self.__load__config("config.yaml")
+        self.color_dict = read_colors(config["label_colors_file"]) if config else {}
         # Central widget with vertical layout
         central_widget = QWidget()
         layout = QVBoxLayout()
@@ -77,9 +78,10 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.text_input)
 
         # Image viewer for displaying and interacting with images
-        self.image_viewer = ImageViewer()
+        self.image_viewer = ImageViewer(self.color_dict)
         layout.addWidget(self.image_viewer)
         self.image_viewer.setMouseTracking(True)
+        self.image_viewer.setEnabled(False)
 
         central_widget.setLayout(layout)
         self.setCentralWidget(central_widget)
@@ -139,7 +141,6 @@ class MainWindow(QMainWindow):
         magnifier_icon = self.svg_to_icon(magnifier_svg, 48)
         magnifier_item = QListWidgetItem(magnifier_icon, "")
         magnifier_item.setToolTip("Zoom")
-        # magnifier_item.setIcon(magnifier_icon)
         self.control_list.addItem(magnifier_item)
 
         self.control_list.setStyleSheet(
@@ -168,7 +169,7 @@ class MainWindow(QMainWindow):
         )
         self.object_dock.setMinimumWidth(350)
         self.object_list = QListWidget()
-        self.object_list.setStyleSheet("QListWidget::item { border: 1px solid gray }")
+        # self.object_list.setStyleSheet("QListWidget::item { border: 1px solid gray }")
         # self.object_list.setSizePolicy(
         #     QSizePolicy.Expanding,
         #     QSizePolicy.Expanding
@@ -198,8 +199,10 @@ class MainWindow(QMainWindow):
         self.accept_action = QAction("Accept", self)
         self.accept_action.triggered.connect(self.next_image)
         self.toolbar.addAction(self.accept_action)
+        self.accept_action.setEnabled(False)
 
         # Data storage
+        self.prev_selected_obj_idx = None
         self.data_source = DataSource.LOCAL
         self.urls = []  # List of image URLs
         self.images = []  # List of PIL.Image objects
@@ -281,6 +284,21 @@ class MainWindow(QMainWindow):
     def update_prompt_mode(self, text):
         self.image_viewer.setMousePrompt(text)
 
+    def show_label_combobox(self):
+        """Show a QComboBox with labels at the mouse position."""
+        combo = QComboBox(self)
+        labels = list(self.color_dict.keys())
+        combo.addItems(labels)
+        combo.setFixedWidth(150)  # Small window size
+
+        # Position above the mouse cursor
+        mouse_pos = self.mapFromGlobal(QPoint(self.cursor().pos()))
+        combo.move(mouse_pos - QPoint(0, combo.height() + 5))  # 5px above mouse
+        combo.showPopup()  # Show dropdown immediately
+        combo.activated.connect(
+            lambda _: self.image_viewer.set_last_label(combo.currentText())
+        )
+
     def load_image_from_url(self, url):
         """Start a thread to load an image from a URL."""
         self.image_viewer.clear()  # Clear previous annotations
@@ -299,6 +317,7 @@ class MainWindow(QMainWindow):
         self.current_image = image
         qimage = pil_to_qimage(image)
         pixmap = QPixmap.fromImage(qimage)
+        self.image_viewer.setEnabled(True)
         self.image_viewer.set_image(pixmap)
 
     def run_model(self):
@@ -313,14 +332,14 @@ class MainWindow(QMainWindow):
         self.model_thread = ModelThread(self.current_image, text, points, boxes)
         self.model_thread.result_ready.connect(self.on_model_result)
         self.model_thread.start()
+        # TODO: Change this to something like thread.join() or emitting a signal from thread
+        self.accept_action.setEnabled(True)
 
     def on_model_result(self, polygons):
         """Display model results and populate the object list."""
         self.image_viewer.display_polygons(polygons)
-        # self.object_list.setSizeAdjustPolicy(QListWidget.AdjustToContents)
-        # self.object_list.clear()
         for i in range(len(polygons)):
-            custom_widget = CustomListItemWidget()
+            custom_widget = CustomListItemWidget(self.color_dict.keys())
             item = QListWidgetItem()
             item.setSizeHint(custom_widget.sizeHint())
 
@@ -329,23 +348,31 @@ class MainWindow(QMainWindow):
             self.object_list.setItemWidget(item, custom_widget)
 
     def add_to_object_list(self, shape_dict: MaskData):
-        custom_widget = CustomListItemWidget()
+        custom_widget = CustomListItemWidget(list(self.color_dict.keys()))
+
+        custom_widget.setupFields(shape_dict.id, shape_dict.label, "Polygon")
         item = QListWidgetItem()
         item.setSizeHint(custom_widget.sizeHint())
 
-        item.setFlags(item.flags() | Qt.ItemFlag.ItemIsEditable)
+        # item.setFlags(item.flags() | Qt.ItemFlag.ItemIsEditable)
+        item.setBackground(QColor(*self.color_dict[shape_dict.label] + (50,)))
         self.object_list.addItem(item)
         self.object_list.setItemWidget(item, custom_widget)
 
     def on_object_selected(self, index):
         """Highlight the selected object's polygon."""
+        if self.prev_selected_obj_idx:
+            self.image_viewer.unhighlight_polygon(self.prev_selected_obj_idx)
         self.image_viewer.highlight_polygon(index)
+        self.object_list.item(index).setForeground(QColor("Blue"))
+        self.prev_selected_obj_idx = index
 
     def control_selected(self, item: QListWidgetItem):
         """Update the ImageViewer's control based on list selection."""
         control = item.toolTip().lower()  # "box" or "polygon"
         if control == "box" or control == "polygon":
             self.image_viewer.set_shape(control)
+            self.show_label_combobox()
 
     def accept_annotations(self):
         objects = []

@@ -35,23 +35,25 @@ class VertexItem(QGraphicsEllipseItem):
 
 @dataclass
 class MaskData(object):
-    def __init__(self, mask_id: int, points: list, lines: list, poly):
+    def __init__(self, mask_id: int, points: list, lines: list, label):
         self.id = mask_id
         self.lines = lines
         self.points = points
-        self.poly = poly
+        self.label = label
 
 
 class ImageViewer(QGraphicsView):
 
     object_added = pyqtSignal(MaskData)
 
-    def __init__(self):
+    def __init__(self, color_dict):
         super().__init__()
         self.image_scene = QGraphicsScene()
         self.setScene(self.image_scene)
         self.setRenderHint(QPainter.RenderHint.Antialiasing)
 
+        self.color_dict = color_dict
+        self.__last__label = None
         self.image_item = None  # QGraphicsPixmapItem for the image
         self.points = []  # List of QPointF for point annotations
         self.boxes = []  # List of [start, end] QPointF pairs for box annotations
@@ -73,6 +75,9 @@ class ImageViewer(QGraphicsView):
         # Mode selection (could be extended via UI buttons)
         # For simplicity, toggle with right-click in this example
         self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+
+    def set_last_label(self, label):
+        self.__last__label = label
 
     def set_mode(self, mode):
         """Set the current mode: 'model' or 'manual'."""
@@ -143,11 +148,15 @@ class ImageViewer(QGraphicsView):
 
     def highlight_polygon(self, index):
         """Highlight the selected polygon."""
-        for i, item in enumerate(self.polygon_items):
-            if i == index:
-                item.setBrush(QBrush(QColor(255, 0, 0, 128)))  # Red for selected
-            else:
-                item.setBrush(QBrush(QColor(0, 255, 0, 128)))  # Green for others
+        # TODO: handle deletion of polygons
+        item = self.polygon_items[index]
+        item.setBrush(QBrush(QColor(*self.color_dict[item.data(1)] + (50,))))
+
+    def unhighlight_polygon(self, index):
+        """Clear the highlighted polygon."""
+        # TODO: handle deletion of polygons
+        item = self.polygon_items[index]
+        item.setBrush(QBrush())
 
     def mousePressEvent(self, event):
         """Handle mouse press for point or box annotation."""
@@ -210,7 +219,7 @@ class ImageViewer(QGraphicsView):
                 self.temp_polygon = self.image_scene.addPolygon(
                     temp_poly,
                     pen=QPen(Qt.GlobalColor.black),
-                    brush=QBrush(QColor(255, 255, 0, 128)),
+                    brush=QBrush(QColor(*self.color_dict[self.__last__label] + (50,))),
                 )
         return super().mouseReleaseEvent(event)
 
@@ -225,18 +234,19 @@ class ImageViewer(QGraphicsView):
             self.temp_polygon = self.image_scene.addPolygon(
                 temp_poly,
                 pen=QPen(Qt.GlobalColor.black),
-                brush=QBrush(QColor(255, 255, 0, 128)),
+                brush=QBrush(QColor(*self.color_dict[self.__last__label] + (50,))),
             )
         elif self.current_shape is None:
             if self.dragging_vertex:
                 rect = self.dragging_vertex.rect()
-                self.dragging_vertex.setPos(pos.x() - 5, pos.y() - 5)
+                self.dragging_vertex.setPos(pos.x() - 10, pos.y() - 10)
                 self.image_scene.update()
                 # self.dragging_vertex.setVisible(True)
             else:
                 item = self.image_scene.itemAt(pos, self.transform())
                 if isinstance(item, QGraphicsPolygonItem):
-                    item.setBrush(QColor(255, 255, 0, 128))
+                    mask_id, label = item.data(0), item.data(1)
+                    item.setBrush(QColor(*self.color_dict[label] + (50,)))
                     self.shaded_poly = item
                 elif self.shaded_poly is not None:
                     self.shaded_poly.setBrush(Qt.GlobalColor.transparent)
@@ -259,19 +269,22 @@ class ImageViewer(QGraphicsView):
                 final_poly = QPolygonF(self.temp_points)
                 polygon_item = self.image_scene.addPolygon(
                     final_poly,
-                    pen=QPen(Qt.GlobalColor.black),
+                    pen=QPen(QColor(*self.color_dict[self.__last__label])),
                     # brush=QBrush(QColor(255, 255, 0, 128)),
                 )
-                self.polygon_items.append(polygon_item)
+                if polygon_item:
+                    polygon_item.setData(0, self.mask_id)
+                    polygon_item.setData(1, self.__last__label)
+                    self.polygon_items.append(polygon_item)
 
                 # Clear temporary drawing data
                 for line in self.temp_lines:
                     self.image_scene.removeItem(line)
                 for ellipse in self.temp_ellipses:
                     self.image_scene.removeItem(ellipse)
-                # Update the points---> mask_id and mask_id--->mask store.
+                    polygon_item.setData(1, self.__last__label)
                 mask_data = MaskData(
-                    self.mask_id, self.temp_points, self.temp_lines, final_poly
+                    self.mask_id, self.temp_points, self.temp_lines, self.__last__label
                 )
                 self.mask_id += 1
                 # emit new mask to the object list
@@ -284,7 +297,9 @@ class ImageViewer(QGraphicsView):
                 for i, point in enumerate(final_poly):
                     vertex_item = VertexItem(0, 0, 15, 15)
                     vertex_item.setPos(point.x() - 5, point.y() - 5)
-                    vertex_item.setBrush(Qt.GlobalColor.black)
+                    vertex_item.setBrush(
+                        QBrush(QColor(*self.color_dict[self.__last__label]))
+                    )
                     vertex_item.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable)
                     vertex_item.setData(0, polygon_item)
                     vertex_item.setData(1, i)
