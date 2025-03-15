@@ -101,8 +101,9 @@ class ImageViewer(QGraphicsView):
         # Clear any existing content
         self.clear()
         self.image_item = self.image_scene.addPixmap(pixmap)
-        self.setSceneRect(self.image_item.boundingRect())
-        self.fitInView(self.image_item, Qt.AspectRatioMode.KeepAspectRatio)
+        if self.image_item:
+            self.setSceneRect(self.image_item.boundingRect())
+            self.fitInView(self.image_item, Qt.AspectRatioMode.KeepAspectRatio)
 
     def set_shape(self, shape):
         if self.mode == "manual":
@@ -178,6 +179,9 @@ class ImageViewer(QGraphicsView):
         item.setData(1, label)
         item.setPen(QColor(*self.color_dict[item.data(1)]))
         item.setBrush(Qt.GlobalColor.transparent)
+        for vertex_item in item.data(2):
+            vertex_item.setBrush(QBrush(QColor(*self.color_dict[item.data(1)])))
+
         self.object_lock.unlock()
 
     def mousePressEvent(self, event):
@@ -295,8 +299,9 @@ class ImageViewer(QGraphicsView):
                     # brush=QBrush(QColor(255, 255, 0, 128)),
                 )
                 if polygon_item:
-                    polygon_item.setData(0, self.mask_id)
-                    polygon_item.setData(1, self.__last__label)
+                    polygon_item.setData(0, self.mask_id)  # poly_id
+                    polygon_item.setData(1, self.__last__label)  # label
+                    polygon_item.setData(2, [])  # vertices
                     self.polygon_items.append(polygon_item)
 
                 # Clear temporary drawing data
@@ -316,6 +321,7 @@ class ImageViewer(QGraphicsView):
                 self.temp_ellipses = []
 
                 # Add movable vertices to the final polygon
+                verteces = []
                 for i, point in enumerate(final_poly):
                     vertex_item = VertexItem(0, 0, 15, 15)
                     vertex_item.setPos(point.x() - 5, point.y() - 5)
@@ -326,6 +332,9 @@ class ImageViewer(QGraphicsView):
                     vertex_item.setData(0, polygon_item)
                     vertex_item.setData(1, i)
                     self.image_scene.addItem(vertex_item)
+                    verteces.append(vertex_item)
+
+                polygon_item.setData(2, verteces)
                 # reset states to NORMAL
                 self.prev_shape = self.current_shape
                 self.current_shape = None
