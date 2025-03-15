@@ -129,28 +129,31 @@ class ImageViewer(QGraphicsView):
             self.temp_polygon = None
         self.object_lock.unlock()
 
-    def display_polygons(self, polygons):
+    def display_polygons(self, mask_data_list: list[MaskData]):
         """Display polygons returned by the model with editable vertices."""
-        if self.image_item:
-            self.image_item.setOpacity(0.5)
+        # if self.image_item:
+        #     self.image_item.setOpacity(0.5)
         self.polygon_items = []
-        for poly in polygons:
-            qpoly = QPolygonF([QPointF(x, y) for x, y in poly])
+        for mask_data in mask_data_list:
+            qpoly = QPolygonF([QPointF(x, y) for x, y in mask_data.points])
             polygon_item = self.image_scene.addPolygon(
                 qpoly,
-                pen=QPen(Qt.GlobalColor.red),
-                brush=QBrush(QColor(0, 255, 0, 128)),
+                pen=QColor(*self.color_dict[mask_data.label]),
+                # brush=QBrush(QColor(0, 255, 0, 128)),
             )
-            self.polygon_items.append(polygon_item)
-            # Add movable vertices
-            for i, point in enumerate(qpoly):
-                vertex_item = VertexItem(0, 0, 20, 20)
-                vertex_item.setPos(point.x() - 3, point.y() - 3)
-                vertex_item.setBrush(Qt.GlobalColor.blue)
-                vertex_item.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable)
-                vertex_item.setData(0, polygon_item)  # Reference to polygon
-                vertex_item.setData(1, i)  # Index in polygon
-                self.image_scene.addItem(vertex_item)
+            if polygon_item:
+                polygon_item.setData(0, mask_data.id)
+                polygon_item.setData(1, mask_data.label)
+                self.polygon_items.append(polygon_item)
+                # Add movable vertices
+                for i, point in enumerate(qpoly):
+                    vertex_item = VertexItem(0, 0, 20, 20)
+                    vertex_item.setPos(point.x() - 3, point.y() - 3)
+                    vertex_item.setBrush(QColor(*self.color_dict[mask_data.label]))
+                    vertex_item.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable)
+                    vertex_item.setData(0, polygon_item)  # Reference to polygon
+                    vertex_item.setData(1, i)  # Index in polygon
+                    self.image_scene.addItem(vertex_item)
 
     def highlight_polygon(self, index):
         """Highlight the selected polygon."""
@@ -175,6 +178,7 @@ class ImageViewer(QGraphicsView):
         item.setData(1, label)
         item.setPen(QColor(*self.color_dict[item.data(1)]))
         item.setBrush(Qt.GlobalColor.transparent)
+        self.object_lock.unlock()
 
     def mousePressEvent(self, event):
         """Handle mouse press for point or box annotation."""

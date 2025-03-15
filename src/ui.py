@@ -1,5 +1,6 @@
 from typing import Optional
 from enum import Enum
+from functools import partial
 from queue import Queue
 from pathlib import Path
 from io import BytesIO
@@ -359,15 +360,15 @@ class MainWindow(QMainWindow):
     def load_image_from_url(self, url):
         """Start a thread to load an image from a URL."""
         self.loader_thread = ImageLoaderThread(url)
-        self.loader_thread.image_loaded.connect(self.on_image_loaded)
+        self.loader_thread.image_loaded.connect(self.load_viewer)
         self.loader_thread.start()
 
     def load_images_local(self, paths):
         self.local_thread = ImageLocalLoaderThread(paths, self.images)
-        self.local_thread.image_loaded.connect(self.on_image_loaded)
+        self.local_thread.image_loaded.connect(self.load_viewer)
         self.local_thread.start()
 
-    def on_image_loaded(self, image):
+    def load_viewer(self, image):
         """Handle the loaded image by displaying it."""
         self.image_viewer.setEnabled(False)
         self.current_image = image
@@ -384,15 +385,17 @@ class MainWindow(QMainWindow):
 
     def change_img_src(self, index):
         if 0 <= index < len(self.urls) and index != self.current_idx:
-            self.accept_annotations()
+            # save annotations for current image
+            self.save_annotations()
+            # load anno for next
             self.current_idx = index
+
             if (self.current_idx >= self.start_idx) and (
                 self.current_idx < self.end_idx
             ):
-                self.on_image_loaded(
+                self.load_viewer(
                     self.images[self.current_idx % MainWindow.MEMORY_LIMIT]
                 )
-                return 0
             elif self.current_idx >= self.end_idx:
                 self.start_idx, self.end_idx = (
                     self.current_idx,
@@ -400,10 +403,8 @@ class MainWindow(QMainWindow):
                 )
                 if self.data_source == DataSource.LOCAL:
                     self.load_images_local(self.urls[self.start_idx : self.end_idx])
-                    return 0
                 elif self.data_source == DataSource.URL_REQUEST:
                     self.load_image_from_url(self.urls[self.current_idx])
-                    return 0
             elif self.current_idx < self.start_idx:
                 # for now do above
                 # TODO: change to loading from [current_idx, end_idx - (start_idx - current_idx)]
@@ -413,10 +414,10 @@ class MainWindow(QMainWindow):
                 )
                 if self.data_source == DataSource.LOCAL:
                     self.load_images_local(self.urls[self.start_idx : self.end_idx])
-                    return 0
                 elif self.data_source == DataSource.URL_REQUEST:
                     self.load_image_from_url(self.urls[self.current_idx])
-                    return 0
+            self.load_annotations(self.current_idx)
+            return 0
         return 1
 
     def go_back(self):
@@ -426,7 +427,7 @@ class MainWindow(QMainWindow):
         # if self.current_idx > 0:
         #     self.current_idx -= 1
         #     if self.current_idx >= self.start_idx:
-        #         self.on_image_loaded(self.images[self.current_idx])
+        #         self.load_viewer(self.images[self.current_idx])
         #     if
         #     self.slider.setValue(self.current_idx)
         #     self.load_image(self.urls[self.current_idx])
@@ -459,7 +460,7 @@ class MainWindow(QMainWindow):
 
     def on_model_result(self, polygons):
         """Display model results and populate the object list."""
-        self.image_viewer.display_polygons(polygons)
+        # self.image_viewer.display_polygons(polygons)
         for i in range(len(polygons)):
             custom_widget = CustomListItemWidget(self.color_dict.keys())
             item = QListWidgetItem()
@@ -473,6 +474,7 @@ class MainWindow(QMainWindow):
         self.image_viewer.changePolygonLabel(poly_idx, label_text)
         item = self.object_list.item(poly_idx)
         if item:
+            item.setData(1, label_text)
             item.setBackground(QColor(*self.color_dict[label_text] + (50,)))
 
     def add_to_object_list(self, shape_dict: MaskData):
@@ -480,14 +482,14 @@ class MainWindow(QMainWindow):
 
         custom_widget.setupFields(shape_dict.id, shape_dict.label, "Polygon")
         item = QListWidgetItem()
+        item.setData(0, shape_dict.id)
+        item.setData(1, shape_dict.label)
         item.setSizeHint(custom_widget.sizeHint())
 
         # item.setFlags(item.flags() | Qt.ItemFlag.ItemIsEditable)
         item.setBackground(QColor(*self.color_dict[shape_dict.label] + (50,)))
         self.object_list.addItem(item)
         self.object_list.setItemWidget(item, custom_widget)
-
-        from functools import partial
 
         custom_widget.label_combo_box.currentTextChanged.connect(
             partial(self.change_object_label, self.object_list.count() - 1)
@@ -512,17 +514,34 @@ class MainWindow(QMainWindow):
             self.image_viewer.set_shape(control)
             self.show_label_combobox()
 
-    def accept_annotations(self):
+    def save_annotations(self):
         objects = []
         image_url = self.urls[self.current_idx]
         for i in range(self.object_list.count()):
-            label = self.object_list.item(i).text()
+            row = self.object_list.item(i)
+            id = row.data(0)
+            label = row.data(1)
             polygon = self.image_viewer.polygon_items[i].polygon()
             polygon_points = [[p.x(), p.y()] for p in polygon]
-            objects.append({"label": label, "polygon": polygon_points})
+            objects.append({"id": id, "label": label, "polygon": polygon_points})
         self.annotations[image_url] = {"objects": objects}
         self.current_idx += 1
-        print(f"Annotations stored for {image_url}")
+
+    def load_annotations(self, index):
+        anno = self.annotations.get(self.urls[index], None)
+        if anno:
+            mask_data_list = [
+                MaskData(
+                    mask_id=obj["id"],
+                    points=obj["polygon"],
+                    lines=[],
+                    label=obj["label"],
+                )
+                for obj in anno["objects"]
+            ]
+            self.image_viewer.display_polygons(mask_data_list)
+            for mask_data in mask_data_list:
+                self.add_to_object_list(mask_data)
 
     def keyPressEvent(self, a0: Optional[QKeyEvent]) -> None:
         if a0 is not None:
