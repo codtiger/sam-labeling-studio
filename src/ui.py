@@ -1,4 +1,6 @@
+from typing import Optional
 from enum import Enum
+from queue import Queue
 from pathlib import Path
 from io import BytesIO
 import os
@@ -19,9 +21,11 @@ from PyQt6.QtWidgets import (
     QComboBox,
     QListView,
     QPushButton,
+    QSlider,
+    QLabel,
 )
 from PyQt6.QtCore import QFile, Qt, QSize, QPoint
-from PyQt6.QtGui import QPixmap, QIcon, QPainter, QAction, QColor
+from PyQt6.QtGui import QPixmap, QIcon, QPainter, QAction, QColor, QKeyEvent
 from PyQt6.QtSvg import QSvgRenderer
 
 from .image_viewer import ImageViewer, MaskData
@@ -44,11 +48,14 @@ class ControlItem(Enum):
 
 class MainWindow(QMainWindow):
 
+    MEMORY_LIMIT = 30
+
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Image Annotation Platform")
         self.resize(1920, 1080)
 
+        self.setFocus()
         config = self.__load__config("config.yaml")
         self.color_dict = read_colors(config["label_colors_file"]) if config else {}
         # Central widget with vertical layout
@@ -76,6 +83,50 @@ class MainWindow(QMainWindow):
         self.text_input = QLineEdit()
         self.text_input.setPlaceholderText("Enter text prompt for the model")
         layout.addWidget(self.text_input)
+
+        # Slider for file navigation
+        self.slider_layout = QHBoxLayout()
+        self.back_button = QPushButton("<")
+        self.back_button.setFixedWidth(30)
+        self.slider = QSlider(Qt.Orientation.Horizontal)
+        self.slider.setMinimum(0)
+        self.slider.setMaximum(0)  # Will update when files are loaded
+        self.slider.setStyleSheet(
+            """
+            QSlider::groove:horizontal {
+                height: 8px;
+                background: #d0d0d0;
+                border-radius: 4px;
+            }
+            QSlider::handle:horizontal {
+                background: #333333;
+                border: 1px solid #000000;
+                width: 12px;
+                height: 12px;
+                margin: -4px 0;
+                border-radius: 6px;
+            }
+            QSlider::sub-page:horizontal {
+                background: #1E90FF;  /* Blue progress */
+                border-radius: 4px;
+            }
+        """
+        )
+        self.forward_button = QPushButton(">")
+        self.forward_button.setFixedWidth(30)
+        self.slider_layout.addWidget(self.back_button)
+        self.slider_layout.addWidget(self.slider)
+        self.slider_layout.addWidget(self.forward_button)
+        layout.addLayout(self.slider_layout)
+
+        self.back_button.pressed.connect(self.go_back)
+        self.forward_button.pressed.connect(self.go_forward)
+        self.slider.sliderMoved.connect(self.change_img_src)
+
+        # Filename label
+        self.filename_label = QLabel("No file loaded")
+        self.filename_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(self.filename_label)
 
         # Image viewer for displaying and interacting with images
         self.image_viewer = ImageViewer(self.color_dict)
@@ -196,17 +247,14 @@ class MainWindow(QMainWindow):
         self.run_model_action.triggered.connect(self.run_model)
         self.toolbar.addAction(self.run_model_action)
 
-        self.accept_action = QAction("Accept", self)
-        self.accept_action.triggered.connect(self.next_image)
-        self.toolbar.addAction(self.accept_action)
-        self.accept_action.setEnabled(False)
-
         # Data storage
         self.prev_selected_obj_idx = None
         self.data_source = DataSource.LOCAL
         self.urls = []  # List of image URLs
-        self.images = []  # List of PIL.Image objects
-        self.current_index = 0  # Index of the current image
+        self.images = [[]] * MainWindow.MEMORY_LIMIT  # List of PIL.Image objects
+        self.start_idx, self.end_idx = 0, MainWindow.MEMORY_LIMIT
+
+        self.current_idx = 0  # Index of the current image
         self.annotations = {}  # Dictionary to store annotations
         self.current_image = None  # Current PIL image
         # Initial update to set button state
@@ -262,10 +310,13 @@ class MainWindow(QMainWindow):
             self.last_directory = Path(file_name).parent
             with open(file_name, "r") as f:
                 self.urls = [line.strip() for line in f if line.strip()]
-            self.current_index = 0
+            self.current_idx = 0
             self.data_source = DataSource.URL_REQUEST
             if self.urls:
-                self.load_image_from_url(self.urls[self.current_index])
+                self.slider.setMaximum(len(self.urls) - 1)
+                self.slider.setValue(self.current_idx)
+                self.update_filename_label()
+                self.load_image_from_url(self.urls[self.current_idx])
 
     def load_images(self):
         self.urls, _ = QFileDialog.getOpenFileNames(
@@ -277,9 +328,15 @@ class MainWindow(QMainWindow):
         )
         if len(self.urls) != 0:
             self.last_directory = Path(self.urls[0]).parent
-            self.current_index = 0
+            self.current_idx = 0
             self.data_source = DataSource.LOCAL
-            self.load_images_local(self.urls)
+
+            # change slider data
+            self.slider.setMaximum(len(self.urls) - 1)
+            self.slider.setValue(self.current_idx)
+            self.update_filename_label()
+
+            self.load_images_local(self.urls[self.start_idx : self.end_idx])
 
     def update_prompt_mode(self, text):
         self.image_viewer.setMousePrompt(text)
@@ -301,24 +358,90 @@ class MainWindow(QMainWindow):
 
     def load_image_from_url(self, url):
         """Start a thread to load an image from a URL."""
-        self.image_viewer.clear()  # Clear previous annotations
-        self.object_list.clear()  # Clear object list
         self.loader_thread = ImageLoaderThread(url)
         self.loader_thread.image_loaded.connect(self.on_image_loaded)
         self.loader_thread.start()
 
     def load_images_local(self, paths):
-        self.local_thread = ImageLocalLoaderThread(paths, self.images, 30)
+        self.local_thread = ImageLocalLoaderThread(paths, self.images)
         self.local_thread.image_loaded.connect(self.on_image_loaded)
         self.local_thread.start()
 
     def on_image_loaded(self, image):
         """Handle the loaded image by displaying it."""
+        self.image_viewer.setEnabled(False)
         self.current_image = image
         qimage = pil_to_qimage(image)
         pixmap = QPixmap.fromImage(qimage)
-        self.image_viewer.setEnabled(True)
+        self.image_viewer.clear()
+        self.object_list.clearSelection()
+        self.object_list.clear()
         self.image_viewer.set_image(pixmap)
+        self.update_filename_label()
+        self.image_viewer.setEnabled(True)
+
+        self.prev_selected_obj_idx = None
+
+    def change_img_src(self, index):
+        if 0 <= index < len(self.urls) and index != self.current_idx:
+            self.accept_annotations()
+            self.current_idx = index
+            if (self.current_idx >= self.start_idx) and (
+                self.current_idx < self.end_idx
+            ):
+                self.on_image_loaded(
+                    self.images[self.current_idx % MainWindow.MEMORY_LIMIT]
+                )
+                return 0
+            elif self.current_idx >= self.end_idx:
+                self.start_idx, self.end_idx = (
+                    self.current_idx,
+                    self.current_idx + MainWindow.MEMORY_LIMIT,
+                )
+                if self.data_source == DataSource.LOCAL:
+                    self.load_images_local(self.urls[self.start_idx : self.end_idx])
+                    return 0
+                elif self.data_source == DataSource.URL_REQUEST:
+                    self.load_image_from_url(self.urls[self.current_idx])
+                    return 0
+            elif self.current_idx < self.start_idx:
+                # for now do above
+                # TODO: change to loading from [current_idx, end_idx - (start_idx - current_idx)]
+                self.start_idx, self.end_idx = (
+                    self.current_idx,
+                    self.current_idx + MainWindow.MEMORY_LIMIT,
+                )
+                if self.data_source == DataSource.LOCAL:
+                    self.load_images_local(self.urls[self.start_idx : self.end_idx])
+                    return 0
+                elif self.data_source == DataSource.URL_REQUEST:
+                    self.load_image_from_url(self.urls[self.current_idx])
+                    return 0
+        return 1
+
+    def go_back(self):
+        ret = self.change_img_src(self.current_idx - 1)
+        if ret == 0:
+            self.slider.setValue(self.current_idx)
+        # if self.current_idx > 0:
+        #     self.current_idx -= 1
+        #     if self.current_idx >= self.start_idx:
+        #         self.on_image_loaded(self.images[self.current_idx])
+        #     if
+        #     self.slider.setValue(self.current_idx)
+        #     self.load_image(self.urls[self.current_idx])
+
+    def go_forward(self):
+        ret = self.change_img_src(self.current_idx + 1)
+        if ret == 0:
+            self.slider.setValue(self.current_idx)
+
+    def update_filename_label(self):
+        if self.urls and 0 <= self.current_idx < len(self.urls):
+            filename = os.path.basename(self.urls[self.current_idx])
+            self.filename_label.setText(filename)
+        else:
+            self.filename_label.setText("No file loaded")
 
     def run_model(self):
         """Run the segmentation model with user inputs."""
@@ -333,7 +456,6 @@ class MainWindow(QMainWindow):
         self.model_thread.result_ready.connect(self.on_model_result)
         self.model_thread.start()
         # TODO: Change this to something like thread.join() or emitting a signal from thread
-        self.accept_action.setEnabled(True)
 
     def on_model_result(self, polygons):
         """Display model results and populate the object list."""
@@ -347,6 +469,12 @@ class MainWindow(QMainWindow):
             self.object_list.addItem(item)
             self.object_list.setItemWidget(item, custom_widget)
 
+    def change_object_label(self, poly_idx, label_text):
+        self.image_viewer.changePolygonLabel(poly_idx, label_text)
+        item = self.object_list.item(poly_idx)
+        if item:
+            item.setBackground(QColor(*self.color_dict[label_text] + (50,)))
+
     def add_to_object_list(self, shape_dict: MaskData):
         custom_widget = CustomListItemWidget(list(self.color_dict.keys()))
 
@@ -359,9 +487,19 @@ class MainWindow(QMainWindow):
         self.object_list.addItem(item)
         self.object_list.setItemWidget(item, custom_widget)
 
+        from functools import partial
+
+        custom_widget.label_combo_box.currentTextChanged.connect(
+            partial(self.change_object_label, self.object_list.count() - 1)
+        )
+
     def on_object_selected(self, index):
         """Highlight the selected object's polygon."""
-        if self.prev_selected_obj_idx:
+        # TODO: Stop using index to communicate with the ImageView for polys.
+        # Obtain their shape.id from a constructed dict
+        if index == -1:
+            return
+        if self.prev_selected_obj_idx is not None:
             self.image_viewer.unhighlight_polygon(self.prev_selected_obj_idx)
         self.image_viewer.highlight_polygon(index)
         self.object_list.item(index).setForeground(QColor("Blue"))
@@ -376,40 +514,21 @@ class MainWindow(QMainWindow):
 
     def accept_annotations(self):
         objects = []
-        image_url = self.urls[self.current_index]
+        image_url = self.urls[self.current_idx]
         for i in range(self.object_list.count()):
             label = self.object_list.item(i).text()
             polygon = self.image_viewer.polygon_items[i].polygon()
             polygon_points = [[p.x(), p.y()] for p in polygon]
             objects.append({"label": label, "polygon": polygon_points})
         self.annotations[image_url] = {"objects": objects}
-        self.current_index += 1
+        self.current_idx += 1
         print(f"Annotations stored for {image_url}")
 
-    def next_image(self):
-        """Save annotations for the current image and move to the next."""
-        # If images are already loaded
-        if self.data_source == DataSource.LOCAL:
-            self.accept_annotations()
-            if len(self.images) != 0:
-                img = self.images.pop()
-                self.image_viewer.clear()  # Clear previous annotations
-                self.object_list.clear()  # Clear object list
-                self.on_image_loaded(img)
-                return
-            else:
-                self.local_thread.wake_up()
+    def keyPressEvent(self, a0: Optional[QKeyEvent]) -> None:
+        if a0 is not None:
+            if a0.key() == Qt.Key.Key_Right:
+                self.go_forward()
+            if a0.key() == Qt.Key.Key_Left:
+                self.go_back()
 
-        # if used the incomplete urlThread
-        # TODO : CHANGE THIS
-        if self.data_source == DataSource.URL_REQUEST:
-            if (
-                self.current_index >= len(self.urls)
-                or not self.image_viewer.polygon_items
-            ):
-                return
-            elif self.current_index < len(self.urls):
-                self.load_image_from_url(self.urls[self.current_index])
-                self.accept_annotations()
-            else:
-                print("All images annotated. Annotations stored in self.annotations.")
+        return super().keyPressEvent(a0)

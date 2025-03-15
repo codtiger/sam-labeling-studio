@@ -6,7 +6,7 @@ from PyQt6.QtWidgets import (
     QGraphicsEllipseItem,
     QGraphicsItem,
 )
-from PyQt6.QtCore import Qt, QPointF, QRectF, QEvent, pyqtSignal
+from PyQt6.QtCore import Qt, QPointF, QRectF, QEvent, pyqtSignal, QReadWriteLock
 from PyQt6.QtGui import QCursor, QPixmap, QBrush, QColor, QPolygonF, QPen, QPainter
 
 from dataclasses import dataclass
@@ -51,6 +51,8 @@ class ImageViewer(QGraphicsView):
         self.image_scene = QGraphicsScene()
         self.setScene(self.image_scene)
         self.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        self.object_lock = QReadWriteLock()
 
         self.color_dict = color_dict
         self.__last__label = None
@@ -110,10 +112,12 @@ class ImageViewer(QGraphicsView):
 
     def clear(self):
         """Clear all annotations and reset the scene."""
+        self.object_lock.lockForWrite()
         self.image_scene.clear()
         self.image_item = None
         self.points = []
         self.boxes = []
+        self.shaded_poly = None
         self.current_box = None
         self.polygon_items = []
         self.temp_points = []
@@ -121,7 +125,9 @@ class ImageViewer(QGraphicsView):
         self.temp_ellipses = []
         if self.temp_polygon:
             self.image_scene.removeItem(self.temp_polygon)
+            del self.temp_polygon
             self.temp_polygon = None
+        self.object_lock.unlock()
 
     def display_polygons(self, polygons):
         """Display polygons returned by the model with editable vertices."""
@@ -149,14 +155,26 @@ class ImageViewer(QGraphicsView):
     def highlight_polygon(self, index):
         """Highlight the selected polygon."""
         # TODO: handle deletion of polygons
+        self.object_lock.lockForRead()
         item = self.polygon_items[index]
         item.setBrush(QBrush(QColor(*self.color_dict[item.data(1)] + (50,))))
+        self.object_lock.unlock()
 
     def unhighlight_polygon(self, index):
         """Clear the highlighted polygon."""
         # TODO: handle deletion of polygons
-        item = self.polygon_items[index]
-        item.setBrush(QBrush())
+        self.object_lock.lockForRead()
+        item: QGraphicsPolygonItem = self.polygon_items[index]
+        item.setBrush(Qt.GlobalColor.transparent)
+        self.object_lock.unlock()
+
+    def changePolygonLabel(self, index, label):
+        """A label change that should case the polygon color change"""
+        self.object_lock.lockForRead()
+        item: QGraphicsPolygonItem = self.polygon_items[index]
+        item.setData(1, label)
+        item.setPen(QColor(*self.color_dict[item.data(1)]))
+        item.setBrush(Qt.GlobalColor.transparent)
 
     def mousePressEvent(self, event):
         """Handle mouse press for point or box annotation."""
@@ -242,7 +260,7 @@ class ImageViewer(QGraphicsView):
                 self.dragging_vertex.setPos(pos.x() - 10, pos.y() - 10)
                 self.image_scene.update()
                 # self.dragging_vertex.setVisible(True)
-            else:
+            elif len(self.image_scene.items()) > 1:
                 item = self.image_scene.itemAt(pos, self.transform())
                 if isinstance(item, QGraphicsPolygonItem):
                     mask_id, label = item.data(0), item.data(1)
