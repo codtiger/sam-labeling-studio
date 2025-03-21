@@ -1,13 +1,24 @@
-from typing import override
+from typing import Optional
 from PyQt6.QtWidgets import (
     QGraphicsPolygonItem,
     QGraphicsView,
     QGraphicsScene,
     QGraphicsEllipseItem,
     QGraphicsItem,
+    QGraphicsPixmapItem,
 )
-from PyQt6.QtCore import Qt, QPointF, QRectF, QEvent, pyqtSignal, QReadWriteLock
-from PyQt6.QtGui import QCursor, QPixmap, QBrush, QColor, QPolygonF, QPen, QPainter
+from PyQt6.QtCore import Qt, QPointF, QPoint, QEvent, pyqtSignal, QReadWriteLock
+from PyQt6.QtGui import (
+    QCursor,
+    QPixmap,
+    QBrush,
+    QColor,
+    QPolygonF,
+    QPen,
+    QPainter,
+    QMouseEvent,
+    QWheelEvent,
+)
 
 from dataclasses import dataclass
 
@@ -50,7 +61,6 @@ class ImageViewer(QGraphicsView):
         super().__init__()
         self.image_scene = QGraphicsScene()
         self.setScene(self.image_scene)
-        self.setRenderHint(QPainter.RenderHint.Antialiasing)
 
         self.object_lock = QReadWriteLock()
 
@@ -74,9 +84,21 @@ class ImageViewer(QGraphicsView):
         self.point_to_shape: dict = {}
 
         self.dragging_vertex = None
+        self.last_pan_pos = None
+        self.is_panning = False
+
+        # Optimize rendering
+        self.setRenderHint(QPainter.RenderHint.Antialiasing)
+        self.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+        # Enable panning
+        self.setInteractive(True)
+        # Important: Hide scrollbars completely
+        # self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        # self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+
         # Mode selection (could be extended via UI buttons)
         # For simplicity, toggle with right-click in this example
-        self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        # self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
 
     def set_last_label(self, label):
         self.__last__label = label
@@ -99,11 +121,24 @@ class ImageViewer(QGraphicsView):
     def set_image(self, pixmap):
         """Set the image to display and fit it to the view."""
         # Clear any existing content
-        self.clear()
+        self.image_scene.clear()
+        # self.image_item = QGraphicsPixmapItem(pixmap)
         self.image_item = self.image_scene.addPixmap(pixmap)
         if self.image_item:
             self.setSceneRect(self.image_item.boundingRect())
-            self.fitInView(self.image_item, Qt.AspectRatioMode.KeepAspectRatio)
+            scale_x = self.rect().width() / self.image_item.boundingRect().width()
+            scale_y = self.rect().height() / self.image_item.boundingRect().height()
+            self.image_scale = min(scale_x, scale_y)
+
+            # Reset the view's transformation matrix
+            self.resetTransform()
+
+            # Scale to fit
+            self.scale(self.image_scale, self.image_scale)
+
+            # Center the image in the view
+            self.centerOn(self.image_item)
+            # self.fitInView(self.image_item, Qt.AspectRatioMode.KeepAspectRatio)
 
     def set_shape(self, shape):
         if self.mode == "manual":
@@ -189,11 +224,17 @@ class ImageViewer(QGraphicsView):
         pos = self.mapToScene(event.pos())
         if event.button() == Qt.MouseButton.LeftButton and self.mode == "manual":
             # "NORMAL" mode(like vim). No shape selected.
-            # Check if an old polygon's ellipses is clicked for edit
             if self.current_shape is None:
                 item = self.image_scene.itemAt(pos, self.transform())
+                # Check if an old polygon's ellipses is clicked for edit
                 if isinstance(item, VertexItem):
+                    self.is_panning = False
                     self.dragging_vertex = item
+                # Moving the image around
+                else:
+                    self.is_panning = True
+                    self.setCursor(Qt.CursorShape.ClosedHandCursor)
+                    self.last_pan_pos = event.pos()
 
             elif self.current_shape == "polygon":
                 self.temp_points.append(pos)
@@ -225,6 +266,11 @@ class ImageViewer(QGraphicsView):
             if self.dragging_vertex:
                 self.dragging_vertex = None
                 self.current_shape = None
+            elif self.is_panning:
+                self.setFocus()
+                self.is_panning = False
+                self.last_pan_pos = None
+                self.setCursor(Qt.CursorShape.ArrowCursor)
         if (
             event.button() == Qt.MouseButton.RightButton
             and self.mode == "manual"
@@ -268,6 +314,32 @@ class ImageViewer(QGraphicsView):
                 self.dragging_vertex.setPos(pos.x() - 10, pos.y() - 10)
                 self.image_scene.update()
                 # self.dragging_vertex.setVisible(True)
+            elif self.is_panning:
+                if self.last_pan_pos is not None:
+                    delta = event.pos() - self.last_pan_pos
+
+                    delta_scene = self.mapToScene(delta) - self.mapToScene(QPoint(0, 0))
+                    current_transform = self.transform()
+                    self.setSceneRect(
+                        self.sceneRect().translated(
+                            -delta_scene.x() * current_transform.m11() * 2,
+                            -delta_scene.y() * current_transform.m22() * 2,
+                        )
+                    )
+                    self.last_pan_pos = event.pos()
+                #     self.horizontalScrollBar().setValue(
+                #         self.horizontalScrollBar().value() - delta.x()
+                #     self.verticalScrollBar().setValue(
+                #         self.verticalScrollBar().value() - delta.y()
+                #     self.last_pan_pos = event.pos()  # Update last position
+                # rect = self.image_item.boundingRect().getRect()
+                # if rect:
+                #     new_x, new_y = (
+                #         rect[0] + (self.last_pan_pos.x() - pos.x()),
+                #         rect[1] + (self.last_pan_pos.y() - pos.y()),
+                #     )
+
+                # self.setSceneRect(new_x, new_y, rect[2], rect[3])
             elif len(self.image_scene.items()) > 1:
                 item = self.image_scene.itemAt(pos, self.transform())
                 if isinstance(item, QGraphicsPolygonItem):
@@ -278,6 +350,61 @@ class ImageViewer(QGraphicsView):
                     self.shaded_poly.setBrush(Qt.GlobalColor.transparent)
 
         return super().mouseMoveEvent(event)
+
+    def wheelEvent(self, event: QWheelEvent):
+        # Zoom in/out with mouse wheel
+        zoomInFactor = 1.25
+        zoomOutFactor = 1 / zoomInFactor
+
+        # Save the scene point under cursor
+        old_pos = self.mapToScene(event.position().toPoint())
+
+        # Zoom
+        if event.angleDelta().y() > 0:
+            zoom_factor = zoomInFactor
+        else:
+            zoom_factor = zoomOutFactor
+
+        # Apply zoom
+        print(zoom_factor)
+        self.scale(zoom_factor, zoom_factor)
+
+        # Get the new position under cursor
+        new_pos = self.mapToScene(event.position().toPoint())
+
+        # Move scene to keep the point under the cursor
+        delta = new_pos - old_pos
+        # Move scene to keep the point under the cursor
+        delta = new_pos - old_pos
+
+        if event.angleDelta().y() > 0:
+            self.setSceneRect(self.sceneRect().translated(-delta))
+        else:
+            self.setSceneRect(self.sceneRect().translated(-delta))
+
+        event.accept()
+        return super().wheelEvent(event)
+
+    def mouseDoubleClickEvent(self, event: Optional[QMouseEvent]) -> None:
+        """Reset the view to fit the image in the center"""
+        if self.image_item:
+            # Reset to identity matrix
+            self.resetTransform()
+
+            # Fit image to view
+            view_rect = self.rect()
+            pixmap_rect = self.image_item.boundingRect()
+            self.setSceneRect(pixmap_rect)
+            scale_x = view_rect.width() / pixmap_rect.width()
+            scale_y = view_rect.height() / pixmap_rect.height()
+            scale = min(scale_x, scale_y)
+
+            # Apply the scale
+            self.scale(scale, scale)
+
+            # Center the image
+            self.centerOn(self.image_item)
+        return super().mouseDoubleClickEvent(event)
 
     def keyPressEvent(self, event):
         if self.mode == "manual":
@@ -358,9 +485,24 @@ class ImageViewer(QGraphicsView):
 
         return super().keyPressEvent(event)
 
-    def resizeEvent(self, event):
+    def resetView(self, event):
         """Adjust image scaling dynamically when the window is resized."""
+        print("shaped")
         super().resizeEvent(event)
         # If an image is loaded, fit it to the new view size
         if self.image_item:
-            self.fitInView(self.image_item, Qt.AspectRatioMode.KeepAspectRatio)
+            self.resetTransform()
+
+            # Fit image to view
+            view_rect = self.rect()
+            pixmap_rect = self.image_item.boundingRect()
+            self.setSceneRect(pixmap_rect)
+            scale_x = view_rect.width() / pixmap_rect.width()
+            scale_y = view_rect.height() / pixmap_rect.height()
+            scale = min(scale_x, scale_y)
+
+            # Apply the scale
+            self.scale(scale, scale)
+
+            # Center the image
+            self.centerOn(self.image_item)
