@@ -1,5 +1,5 @@
 from PyQt6.QtGui import QImage, QColor, QStyleHints
-from PyQt6.QtCore import Qt, QSize, QRect
+from PyQt6.QtCore import QRectF, Qt, QSize, QRect, QPoint
 from PIL import Image, ImageQt
 from PyQt6.QtWidgets import QStyledItemDelegate, QStyle
 
@@ -49,3 +49,16 @@ def read_colors(text_file):
                 int(line_cols[2]),
             )
     return color_dict
+
+
+def is_inside_rect(rect: QRectF, point: QPoint):
+    rect_coords = rect.getCoords()
+    x, y = point.x(), point.y()
+    if (
+        (x < rect_coords[0])
+        or (x > rect_coords[2])
+        or (y < rect_coords[1])
+        or (y > rect_coords[3])
+    ):
+        return False
+    return True

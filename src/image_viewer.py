@@ -22,6 +22,8 @@ from PyQt6.QtGui import (
 
 from dataclasses import dataclass
 
+from .utils import is_inside_rect
+
 
 class VertexItem(QGraphicsEllipseItem):
     """Custom item for polygon vertices that updates the parent polygon when moved."""
@@ -298,8 +300,13 @@ class ImageViewer(QGraphicsView):
     def mouseMoveEvent(self, event):
         pos = self.mapToScene(event.pos())
         """Spy on mouse move events from the main window."""
-        if self.current_shape == "polygon" and len(self.temp_points) >= 2:
+        if (
+            self.current_shape == "polygon"
+            and len(self.temp_points) >= 2
+            and is_inside_rect(self.image_scene.sceneRect(), pos)
+        ):
             if self.temp_polygon:
+                self.image_scene.sceneRect
                 self.image_scene.removeItem(self.temp_polygon)
 
             temp_poly = QPolygonF(self.temp_points + [pos])
