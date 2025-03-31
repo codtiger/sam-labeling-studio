@@ -32,19 +32,7 @@ from PyQt6.QtSvg import QSvgRenderer
 from .image_viewer import ImageViewer, MaskData
 from .list_item_widget import CustomListItemWidget
 from .threads import ImageLoaderThread, ModelThread, ImageLocalLoaderThread
-from .utils import pil_to_qimage, ShapeDelegate, read_colors
-
-
-class DataSource(Enum):
-    URL_REQUEST = 0
-    LOCAL = 1
-
-
-class ControlItem(Enum):
-    NORMAL = 0
-    BOX = 1
-    POLYGON = 2
-    ZOOM = 3
+from .utils import pil_to_qimage, ShapeDelegate, read_colors, DataSource, ControlItem
 
 
 class MainWindow(QMainWindow):
@@ -152,7 +140,8 @@ class MainWindow(QMainWindow):
         """
         mouse_icon = self.svg_to_icon(mouse_svg, 48)
         mouse_item = QListWidgetItem(mouse_icon, "")
-        mouse_item.setToolTip("Mouse")
+        mouse_item.setToolTip("Cursor")
+        mouse_item.setData(0, ControlItem.NORMAL)
 
         self.control_list.addItem(mouse_item)
         box_svg = """
@@ -164,6 +153,7 @@ class MainWindow(QMainWindow):
         box_icon = self.svg_to_icon(box_svg, 48)
         box_item = QListWidgetItem(box_icon, "")
         box_item.setToolTip("Box")
+        box_item.setData(0, ControlItem.BOX)
 
         self.control_list.addItem(box_item)
 
@@ -176,6 +166,8 @@ class MainWindow(QMainWindow):
         polygon_icon = self.svg_to_icon(polygon_svg, 48)
         polygon_item = QListWidgetItem(polygon_icon, "")
         polygon_item.setToolTip("Polygon")
+        polygon_item.setData(0, ControlItem.POLYGON)
+
         self.control_list.addItem(polygon_item)
 
         magnifier_svg = """
@@ -193,7 +185,24 @@ class MainWindow(QMainWindow):
         magnifier_icon = self.svg_to_icon(magnifier_svg, 48)
         magnifier_item = QListWidgetItem(magnifier_icon, "")
         magnifier_item.setToolTip("Zoom")
+        magnifier_item.setData(0, ControlItem.ZOOM)
         self.control_list.addItem(magnifier_item)
+
+        roi_region_svg = """
+        <svg width="100" height="100" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" >
+              <rect x="12" y="5" width="11" height="7" stroke="white" stroke-width="2" fill="none"/>
+
+              <!-- Magnifying Glass -->
+                <circle cx="10" cy="10" r="7" stroke="white" stroke-width="2" fill="none"/>
+                <line x1="15" y1="15" x2="22" y2="22" stroke="white" stroke-width="2"/>
+            </svg>
+
+        """
+        roi_icon = self.svg_to_icon(roi_region_svg, 48)
+        roi_item = QListWidgetItem(roi_icon, "")
+        roi_item.setToolTip("Select ROI")
+        roi_item.setData(0, ControlItem.ROI)
+        self.control_list.addItem(roi_item)
 
         self.control_list.setStyleSheet(
             """
@@ -263,6 +272,7 @@ class MainWindow(QMainWindow):
 
         # signal connectors
         self.image_viewer.object_added.connect(self.add_to_object_list)
+        self.image_viewer.control_change.connect(self.set_control)
 
     def __load__config(self, yaml_path):
 
@@ -291,7 +301,7 @@ class MainWindow(QMainWindow):
             self.manual_prompt_combo.setEnabled(True)
             self.run_model_action.setEnabled(True)
             self.control_dock.setEnabled(False)
-            self.control_list.clearSelection()  # Clear selection in model mode
+            self.control_list.setCurrentRow(0)  # Clear selection in model mode
         else:  # manual_mode_radio is checked
             self.image_viewer.set_mode("manual")
             self.run_model_action.setEnabled(False)
@@ -509,10 +519,17 @@ class MainWindow(QMainWindow):
 
     def control_selected(self, item: QListWidgetItem):
         """Update the ImageViewer's control based on list selection."""
-        control = item.toolTip().lower()  # "box" or "polygon"
-        if control == "box" or control == "polygon":
-            self.image_viewer.set_shape(control)
+        control = item.data(0)  # "box" or "polygon"
+        self.image_viewer.set_control(control)
+        if control == ControlItem.BOX or control == ControlItem.POLYGON:
             self.show_label_combobox()
+        elif control == ControlItem.ZOOM:
+            pass
+        elif control == ControlItem.NORMAL:
+            pass
+
+    def set_control(self, control: ControlItem):
+        self.control_list.setCurrentRow(control.value.real)
 
     def save_annotations(self):
         objects = []

@@ -6,8 +6,18 @@ from PyQt6.QtWidgets import (
     QGraphicsEllipseItem,
     QGraphicsItem,
     QGraphicsPixmapItem,
+    QRubberBand,
 )
-from PyQt6.QtCore import Qt, QPointF, QPoint, QEvent, pyqtSignal, QReadWriteLock
+from PyQt6.QtCore import (
+    Qt,
+    QSize,
+    QPointF,
+    QPoint,
+    QRect,
+    QRectF,
+    pyqtSignal,
+    QReadWriteLock,
+)
 from PyQt6.QtGui import (
     QCursor,
     QPixmap,
@@ -22,7 +32,7 @@ from PyQt6.QtGui import (
 
 from dataclasses import dataclass
 
-from .utils import is_inside_rect
+from .utils import is_inside_rect, ControlItem
 
 
 class VertexItem(QGraphicsEllipseItem):
@@ -58,6 +68,7 @@ class MaskData(object):
 class ImageViewer(QGraphicsView):
 
     object_added = pyqtSignal(MaskData)
+    control_change = pyqtSignal(ControlItem)
 
     def __init__(self, color_dict):
         super().__init__()
@@ -80,24 +91,31 @@ class ImageViewer(QGraphicsView):
         self.temp_lines = []  # Temporary lines connecting points
         self.temp_polygon = None  # Temporary shaded polygon during drawing
         self.mode = "model"
-        self.current_shape = None  # Current shape for manual annotation
+        self.current_control = ControlItem.NORMAL  # Current shape for manual annotation
         self.prev_shape = None  # Previous shape for pressing N
         self.shaded_poly = None
         self.point_to_shape: dict = {}
 
         self.dragging_vertex = None
         self.last_pan_pos = None
+        self.start_roi_pos = QPoint()
+
         self.is_panning = False
+        self.is_selecting_roi = False
+
+        self.rubber_band: QRubberBand
 
         # Optimize rendering
         self.setRenderHint(QPainter.RenderHint.Antialiasing)
         self.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
         # Enable panning
-        self.setInteractive(True)
+        # self.setInteractive(True)
         # Important: Hide scrollbars completely
         # self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         # self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
 
+        self.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)
+        self.setTransformationAnchor(QGraphicsView.ViewportAnchor.NoAnchor)
         # Mode selection (could be extended via UI buttons)
         # For simplicity, toggle with right-click in this example
         # self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
@@ -142,9 +160,9 @@ class ImageViewer(QGraphicsView):
             self.centerOn(self.image_item)
             # self.fitInView(self.image_item, Qt.AspectRatioMode.KeepAspectRatio)
 
-    def set_shape(self, shape):
+    def set_control(self, control):
         if self.mode == "manual":
-            self.current_shape = shape
+            self.current_control = control
             self.setCursor(Qt.CursorShape.CrossCursor)
             self.clear_temp()
 
@@ -226,19 +244,22 @@ class ImageViewer(QGraphicsView):
         pos = self.mapToScene(event.pos())
         if event.button() == Qt.MouseButton.LeftButton and self.mode == "manual":
             # "NORMAL" mode(like vim). No shape selected.
-            if self.current_shape is None:
+            if self.current_control == ControlItem.NORMAL:
                 item = self.image_scene.itemAt(pos, self.transform())
                 # Check if an old polygon's ellipses is clicked for edit
                 if isinstance(item, VertexItem):
                     self.is_panning = False
                     self.dragging_vertex = item
-                # Moving the image around
-                else:
+                # Moving the image around if no scrollbar
+                elif self.transform().m11() <= 1:
                     self.is_panning = True
                     self.setCursor(Qt.CursorShape.ClosedHandCursor)
                     self.last_pan_pos = event.pos()
 
-            elif self.current_shape == "polygon":
+                else:
+                    super().mousePressEvent(event)
+
+            elif self.current_control == ControlItem.POLYGON:
                 self.temp_points.append(pos)
                 ellipse = self.image_scene.addEllipse(
                     pos.x() - 6, pos.y() - 6, 15, 15, brush=Qt.GlobalColor.red
@@ -254,6 +275,13 @@ class ImageViewer(QGraphicsView):
                         QPen(Qt.GlobalColor.black),
                     )
                     self.temp_lines.append(line)
+            elif self.current_control == ControlItem.ROI:
+                self.is_selecting_roi = True
+                self.start_roi_pos = event.pos()
+                self.rubber_band = QRubberBand(QRubberBand.Shape.Rectangle, self)
+                self.rubber_band.setGeometry(QRect(self.start_roi_pos, QSize()))
+                self.rubber_band.show()
+
         elif self.mode == "box":
             self.current_box = [pos, pos]
         elif event.button() == Qt.MouseButton.RightButton:
@@ -261,18 +289,90 @@ class ImageViewer(QGraphicsView):
             # Toggle mode (for simplicity; could use buttons)
             # self.mode = "box" if self.mode == "point" else "point"
             # print(f"Mode switched to: {self.mode}")
+        else:
+            super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        pos = self.mapToScene(event.pos())
+        """Spy on mouse move events from the main window."""
+        if (
+            self.current_control == ControlItem.POLYGON
+            and len(self.temp_points) >= 2
+            and is_inside_rect(self.image_scene.sceneRect(), pos)
+        ):
+            if self.temp_polygon:
+                self.image_scene.sceneRect
+                self.image_scene.removeItem(self.temp_polygon)
+
+            temp_poly = QPolygonF(self.temp_points + [pos])
+            self.temp_polygon = self.image_scene.addPolygon(
+                temp_poly,
+                pen=QPen(Qt.GlobalColor.black),
+                brush=QBrush(QColor(*self.color_dict[self.__last__label] + (50,))),
+            )
+        else:
+            if self.dragging_vertex:
+                rect = self.dragging_vertex.rect()
+                self.dragging_vertex.setPos(pos.x() - 10, pos.y() - 10)
+                self.image_scene.update()
+                # self.dragging_vertex.setVisible(True)
+            elif self.is_panning:
+                if self.last_pan_pos is not None:
+                    delta = event.pos() - self.last_pan_pos
+
+                    delta_scene = self.mapToScene(delta) - self.mapToScene(QPoint(0, 0))
+                    current_transform = self.transform()
+                    self.setSceneRect(
+                        self.sceneRect().translated(
+                            -delta_scene.x() * current_transform.m11() * 2,
+                            -delta_scene.y() * current_transform.m22() * 2,
+                        )
+                    )
+                    self.last_pan_pos = event.pos()
+            elif self.is_selecting_roi:
+                rect = QRect(self.start_roi_pos, event.pos()).normalized()
+                self.rubber_band.setGeometry(rect)
+
+            elif len(self.image_scene.items()) > 1:
+                item = self.image_scene.itemAt(pos, self.transform())
+                if isinstance(item, QGraphicsPolygonItem):
+                    mask_id, label = item.data(0), item.data(1)
+                    item.setBrush(QColor(*self.color_dict[label] + (50,)))
+                    self.shaded_poly = item
+                elif self.shaded_poly is not None:
+                    self.shaded_poly.setBrush(Qt.GlobalColor.transparent)
+
+        return super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event):
         """Undo the last selected point on right-click."""
         if event.button() == Qt.MouseButton.LeftButton:
             if self.dragging_vertex:
                 self.dragging_vertex = None
-                self.current_shape = None
+                self.current_control = ControlItem.NORMAL
             elif self.is_panning:
                 self.setFocus()
                 self.is_panning = False
                 self.last_pan_pos = None
                 self.setCursor(Qt.CursorShape.ArrowCursor)
+            elif self.is_selecting_roi:
+                rect_view = self.rubber_band.geometry()
+                self.rubber_band.hide()
+                self.rubber_band.deleteLater()
+                self.rubber_band = None
+
+                top_left = self.mapToScene(rect_view.topLeft())
+                bottom_right = self.mapToScene(rect_view.bottomRight())
+                roi_rect = QRectF(top_left, bottom_right).normalized()
+
+                if roi_rect.isValid() and not roi_rect.isEmpty():
+                    self.fitInView(roi_rect, Qt.AspectRatioMode.KeepAspectRatio)
+
+                self.is_selecting_roi = False
+                self.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)
+                self.current_control = ControlItem.NORMAL
+                self.control_change.emit(ControlItem.NORMAL)
+
         if (
             event.button() == Qt.MouseButton.RightButton
             and self.mode == "manual"
@@ -297,70 +397,9 @@ class ImageViewer(QGraphicsView):
                 )
         return super().mouseReleaseEvent(event)
 
-    def mouseMoveEvent(self, event):
-        pos = self.mapToScene(event.pos())
-        """Spy on mouse move events from the main window."""
-        if (
-            self.current_shape == "polygon"
-            and len(self.temp_points) >= 2
-            and is_inside_rect(self.image_scene.sceneRect(), pos)
-        ):
-            if self.temp_polygon:
-                self.image_scene.sceneRect
-                self.image_scene.removeItem(self.temp_polygon)
-
-            temp_poly = QPolygonF(self.temp_points + [pos])
-            self.temp_polygon = self.image_scene.addPolygon(
-                temp_poly,
-                pen=QPen(Qt.GlobalColor.black),
-                brush=QBrush(QColor(*self.color_dict[self.__last__label] + (50,))),
-            )
-        elif self.current_shape is None:
-            if self.dragging_vertex:
-                rect = self.dragging_vertex.rect()
-                self.dragging_vertex.setPos(pos.x() - 10, pos.y() - 10)
-                self.image_scene.update()
-                # self.dragging_vertex.setVisible(True)
-            elif self.is_panning:
-                if self.last_pan_pos is not None:
-                    delta = event.pos() - self.last_pan_pos
-
-                    delta_scene = self.mapToScene(delta) - self.mapToScene(QPoint(0, 0))
-                    current_transform = self.transform()
-                    self.setSceneRect(
-                        self.sceneRect().translated(
-                            -delta_scene.x() * current_transform.m11() * 2,
-                            -delta_scene.y() * current_transform.m22() * 2,
-                        )
-                    )
-                    self.last_pan_pos = event.pos()
-                #     self.horizontalScrollBar().setValue(
-                #         self.horizontalScrollBar().value() - delta.x()
-                #     self.verticalScrollBar().setValue(
-                #         self.verticalScrollBar().value() - delta.y()
-                #     self.last_pan_pos = event.pos()  # Update last position
-                # rect = self.image_item.boundingRect().getRect()
-                # if rect:
-                #     new_x, new_y = (
-                #         rect[0] + (self.last_pan_pos.x() - pos.x()),
-                #         rect[1] + (self.last_pan_pos.y() - pos.y()),
-                #     )
-
-                # self.setSceneRect(new_x, new_y, rect[2], rect[3])
-            elif len(self.image_scene.items()) > 1:
-                item = self.image_scene.itemAt(pos, self.transform())
-                if isinstance(item, QGraphicsPolygonItem):
-                    mask_id, label = item.data(0), item.data(1)
-                    item.setBrush(QColor(*self.color_dict[label] + (50,)))
-                    self.shaded_poly = item
-                elif self.shaded_poly is not None:
-                    self.shaded_poly.setBrush(Qt.GlobalColor.transparent)
-
-        return super().mouseMoveEvent(event)
-
     def wheelEvent(self, event: QWheelEvent):
         # Zoom in/out with mouse wheel
-        zoomInFactor = 1.25
+        zoomInFactor = 1.15
         zoomOutFactor = 1 / zoomInFactor
 
         # Save the scene point under cursor
@@ -373,7 +412,6 @@ class ImageViewer(QGraphicsView):
             zoom_factor = zoomOutFactor
 
         # Apply zoom
-        print(zoom_factor)
         self.scale(zoom_factor, zoom_factor)
 
         # Get the new position under cursor
@@ -381,16 +419,14 @@ class ImageViewer(QGraphicsView):
 
         # Move scene to keep the point under the cursor
         delta = new_pos - old_pos
-        # Move scene to keep the point under the cursor
-        delta = new_pos - old_pos
 
-        if event.angleDelta().y() > 0:
-            self.setSceneRect(self.sceneRect().translated(-delta))
-        else:
-            self.setSceneRect(self.sceneRect().translated(-delta))
+        self.translate(delta.x(), delta.y())
+        # if event.angleDelta().y() > 0:
+        #     self.setSceneRect(self.sceneRect().translated(-delta))
+        # else:
+        #     self.setSceneRect(self.sceneRect().translated(-delta))
 
         event.accept()
-        return super().wheelEvent(event)
 
     def mouseDoubleClickEvent(self, event: Optional[QMouseEvent]) -> None:
         """Reset the view to fit the image in the center"""
@@ -416,63 +452,73 @@ class ImageViewer(QGraphicsView):
     def keyPressEvent(self, event):
         if self.mode == "manual":
             # Finalize current temp_poly, and add it to objects
-            if self.prev_shape is not None and self.current_shape is None:
-                self.current_shape = self.prev_shape
-                self.setCursor(Qt.CursorShape.CrossCursor)
+            if event.key() == Qt.Key.Key_N:
+                if (
+                    self.prev_shape is not None
+                    and self.current_control == ControlItem.NORMAL
+                ):
+                    self.current_control = self.prev_shape
+                    self.control_change.emit(self.current_control)
+                    self.setCursor(Qt.CursorShape.CrossCursor)
 
-            elif event.key() == Qt.Key.Key_N and self.temp_points:
-                if self.temp_polygon:
-                    self.image_scene.removeItem(self.temp_polygon)
-                    self.temp_polygon = None
+                elif self.temp_points:
+                    if self.temp_polygon:
+                        self.image_scene.removeItem(self.temp_polygon)
+                        self.temp_polygon = None
 
-                # Create final polygon
-                final_poly = QPolygonF(self.temp_points)
-                polygon_item = self.image_scene.addPolygon(
-                    final_poly,
-                    pen=QPen(QColor(*self.color_dict[self.__last__label])),
-                    # brush=QBrush(QColor(255, 255, 0, 128)),
-                )
-                if polygon_item:
-                    polygon_item.setData(0, self.mask_id)  # poly_id
-                    polygon_item.setData(1, self.__last__label)  # label
-                    polygon_item.setData(2, [])  # vertices
-                    self.polygon_items.append(polygon_item)
-
-                # Clear temporary drawing data
-                for line in self.temp_lines:
-                    self.image_scene.removeItem(line)
-                for ellipse in self.temp_ellipses:
-                    self.image_scene.removeItem(ellipse)
-                    polygon_item.setData(1, self.__last__label)
-                mask_data = MaskData(
-                    self.mask_id, self.temp_points, self.temp_lines, self.__last__label
-                )
-                self.mask_id += 1
-                # emit new mask to the object list
-                self.object_added.emit(mask_data)
-                self.temp_lines = []
-                self.temp_points = []
-                self.temp_ellipses = []
-
-                # Add movable vertices to the final polygon
-                verteces = []
-                for i, point in enumerate(final_poly):
-                    vertex_item = VertexItem(0, 0, 15, 15)
-                    vertex_item.setPos(point.x() - 5, point.y() - 5)
-                    vertex_item.setBrush(
-                        QBrush(QColor(*self.color_dict[self.__last__label]))
+                    # Create final polygon
+                    final_poly = QPolygonF(self.temp_points)
+                    polygon_item = self.image_scene.addPolygon(
+                        final_poly,
+                        pen=QPen(QColor(*self.color_dict[self.__last__label])),
+                        # brush=QBrush(QColor(255, 255, 0, 128)),
                     )
-                    vertex_item.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable)
-                    vertex_item.setData(0, polygon_item)
-                    vertex_item.setData(1, i)
-                    self.image_scene.addItem(vertex_item)
-                    verteces.append(vertex_item)
+                    if polygon_item:
+                        polygon_item.setData(0, self.mask_id)  # poly_id
+                        polygon_item.setData(1, self.__last__label)  # label
+                        polygon_item.setData(2, [])  # vertices
+                        self.polygon_items.append(polygon_item)
 
-                polygon_item.setData(2, verteces)
-                # reset states to NORMAL
-                self.prev_shape = self.current_shape
-                self.current_shape = None
-                self.setCursor(Qt.CursorShape.ArrowCursor)
+                    # Clear temporary drawing data
+                    for line in self.temp_lines:
+                        self.image_scene.removeItem(line)
+                    for ellipse in self.temp_ellipses:
+                        self.image_scene.removeItem(ellipse)
+                        polygon_item.setData(1, self.__last__label)
+                    mask_data = MaskData(
+                        self.mask_id,
+                        self.temp_points,
+                        self.temp_lines,
+                        self.__last__label,
+                    )
+                    self.mask_id += 1
+                    # emit new mask to the object list
+                    self.object_added.emit(mask_data)
+                    self.temp_lines = []
+                    self.temp_points = []
+                    self.temp_ellipses = []
+
+                    # Add movable vertices to the final polygon
+                    verteces = []
+                    for i, point in enumerate(final_poly):
+                        vertex_item = VertexItem(0, 0, 15, 15)
+                        vertex_item.setPos(point.x() - 5, point.y() - 5)
+                        vertex_item.setBrush(
+                            QBrush(QColor(*self.color_dict[self.__last__label]))
+                        )
+                        vertex_item.setFlag(
+                            QGraphicsItem.GraphicsItemFlag.ItemIsMovable
+                        )
+                        vertex_item.setData(0, polygon_item)
+                        vertex_item.setData(1, i)
+                        self.image_scene.addItem(vertex_item)
+                        verteces.append(vertex_item)
+
+                    polygon_item.setData(2, verteces)
+                    # reset states to NORMAL
+                    self.prev_shape = self.current_control
+                    self.current_control = ControlItem.NORMAL
+                    self.setCursor(Qt.CursorShape.ArrowCursor)
             # Remove the current temp poly upon pressing ESC
             elif event.key() == Qt.Key.Key_Escape and self.temp_points:
                 if self.temp_polygon:
@@ -487,14 +533,13 @@ class ImageViewer(QGraphicsView):
                     self.temp_ellipses = []
 
                 # return to NORMAL mode
-                self.current_shape = None
+                self.current_control = ControlItem.NORMAL
                 self.setCursor(Qt.CursorShape.ArrowCursor)
 
         return super().keyPressEvent(event)
 
     def resetView(self, event):
         """Adjust image scaling dynamically when the window is resized."""
-        print("shaped")
         super().resizeEvent(event)
         # If an image is loaded, fit it to the new view size
         if self.image_item:

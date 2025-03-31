@@ -1,7 +1,22 @@
+from enum import Enum
+
 from PyQt6.QtGui import QImage, QColor, QStyleHints
 from PyQt6.QtCore import QRectF, Qt, QSize, QRect, QPoint
 from PIL import Image, ImageQt
 from PyQt6.QtWidgets import QStyledItemDelegate, QStyle
+
+
+class DataSource(Enum):
+    URL_REQUEST = 0
+    LOCAL = 1
+
+
+class ControlItem(Enum):
+    NORMAL = 0
+    BOX = 1
+    POLYGON = 2
+    ZOOM = 3
+    ROI = 4
 
 
 class ShapeDelegate(QStyledItemDelegate):
