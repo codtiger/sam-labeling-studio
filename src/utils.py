@@ -15,7 +15,8 @@ class ControlItem(Enum):
     NORMAL = 0
     BOX = 1
     POLYGON = 2
-    ZOOM = 3
+    ZOOM_IN = 3
+    ZOOM_OUT = 4
     ROI = 4
 
 

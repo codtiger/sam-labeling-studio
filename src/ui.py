@@ -170,7 +170,7 @@ class MainWindow(QMainWindow):
 
         self.control_list.addItem(polygon_item)
 
-        magnifier_svg = """
+        zoom_in_svg = """
         <svg width="100" height="100" viewBox="0 0 24 24" fill="none"
             xmlns="http://www.w3.org/2000/svg"
             stroke="white"
@@ -178,15 +178,36 @@ class MainWindow(QMainWindow):
             stroke-linecap="round"
             stroke-linejoin="round"
         >
+                <line x1="11" y1="6" x2="11" y2="12" stroke="white" stroke-width="2"/>
+                <line x1="8" y1="9" x2="14" y2="9" stroke="white" stroke-width="2"/>
             <circle cx="10" cy="10" r="7" stroke="white" stroke-width="2"/>
             <line x1="15" y1="15" x2="22" y2="22" stroke="white" stroke-width="2"/>
         </svg>
         """
-        magnifier_icon = self.svg_to_icon(magnifier_svg, 48)
-        magnifier_item = QListWidgetItem(magnifier_icon, "")
-        magnifier_item.setToolTip("Zoom")
-        magnifier_item.setData(0, ControlItem.ZOOM)
-        self.control_list.addItem(magnifier_item)
+        zoom_icon = self.svg_to_icon(zoom_in_svg, 48)
+        zoom_in_item = QListWidgetItem(zoom_icon, "")
+        zoom_in_item.setToolTip("Zoom")
+        zoom_in_item.setData(0, ControlItem.ZOOM_IN)
+        self.control_list.addItem(zoom_in_item)
+
+        zoom_out_svg = """
+        <svg width="100" height="100" viewBox="0 0 24 24" fill="none"
+            xmlns="http://www.w3.org/2000/svg"
+            stroke="white"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+        >
+                <line x1="8" y1="9" x2="14" y2="9" stroke="white" stroke-width="2"/>
+            <circle cx="10" cy="10" r="7" stroke="white" stroke-width="2"/>
+            <line x1="15" y1="15" x2="22" y2="22" stroke="white" stroke-width="2"/>
+        </svg>
+        """
+        zoom_icon = self.svg_to_icon(zoom_out_svg, 48)
+        zoom_out_item = QListWidgetItem(zoom_icon, "")
+        zoom_out_item.setToolTip("Zoom")
+        zoom_out_item.setData(0, ControlItem.ZOOM_OUT)
+        self.control_list.addItem(zoom_out_item)
 
         roi_region_svg = """
         <svg width="100" height="100" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" >
@@ -520,13 +541,19 @@ class MainWindow(QMainWindow):
     def control_selected(self, item: QListWidgetItem):
         """Update the ImageViewer's control based on list selection."""
         control = item.data(0)  # "box" or "polygon"
-        self.image_viewer.set_control(control)
         if control == ControlItem.BOX or control == ControlItem.POLYGON:
             self.show_label_combobox()
-        elif control == ControlItem.ZOOM:
-            pass
+            self.image_viewer.set_control(control)
+        if control == ControlItem.ROI:
+            self.image_viewer.set_control(control)
+        elif control == ControlItem.ZOOM_IN:
+            self.image_viewer.zoom(control)
+            self.control_list.setCurrentRow(0)
+        elif control == ControlItem.ZOOM_OUT:
+            self.image_viewer.zoom(control)
+            self.control_list.setCurrentRow(0)
         elif control == ControlItem.NORMAL:
-            pass
+            self.image_viewer.set_control(control)
 
     def set_control(self, control: ControlItem):
         self.control_list.setCurrentRow(control.value.real)

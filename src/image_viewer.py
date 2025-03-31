@@ -5,7 +5,6 @@ from PyQt6.QtWidgets import (
     QGraphicsScene,
     QGraphicsEllipseItem,
     QGraphicsItem,
-    QGraphicsPixmapItem,
     QRubberBand,
 )
 from PyQt6.QtCore import (
@@ -19,8 +18,6 @@ from PyQt6.QtCore import (
     QReadWriteLock,
 )
 from PyQt6.QtGui import (
-    QCursor,
-    QPixmap,
     QBrush,
     QColor,
     QPolygonF,
@@ -163,7 +160,11 @@ class ImageViewer(QGraphicsView):
     def set_control(self, control):
         if self.mode == "manual":
             self.current_control = control
-            self.setCursor(Qt.CursorShape.CrossCursor)
+            if control == ControlItem.NORMAL:
+                self.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)
+            else:
+                self.setDragMode(QGraphicsView.DragMode.NoDrag)
+                self.setCursor(Qt.CursorShape.CrossCursor)
             self.clear_temp()
 
     def clear(self):
@@ -427,6 +428,19 @@ class ImageViewer(QGraphicsView):
         #     self.setSceneRect(self.sceneRect().translated(-delta))
 
         event.accept()
+
+    def zoom(self, in_or_out: ControlItem):
+        zoomInFactor = 1.15
+        zoomOutFactor = 1 / zoomInFactor
+
+        # Zoom
+        if in_or_out is ControlItem.ZOOM_IN:
+            zoom_factor = zoomInFactor
+        else:
+            zoom_factor = zoomOutFactor
+
+        # Apply zoom
+        self.scale(zoom_factor, zoom_factor)
 
     def mouseDoubleClickEvent(self, event: Optional[QMouseEvent]) -> None:
         """Reset the view to fit the image in the center"""
