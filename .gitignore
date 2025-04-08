@@ -10,5 +10,12 @@ __pycache__
 # python env
 venv
 
-# macOS 
+# macOS
 .DS_Store
+
+# Weights / checkpoints
+.pt
+.ckpt
+
+# environment vars
+.env

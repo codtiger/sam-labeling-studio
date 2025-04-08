@@ -1,9 +1,40 @@
 from enum import Enum
+import logging
+from typing import Optional
+import os
 
-from PyQt6.QtGui import QImage, QColor, QStyleHints
+from PyQt6.QtGui import QImage, QColor, QStyleHints, QIcon
 from PyQt6.QtCore import QRectF, Qt, QSize, QRect, QPoint
 from PIL import Image, ImageQt
 from PyQt6.QtWidgets import QStyledItemDelegate, QStyle
+
+import numpy as np
+
+
+# Custom Logger formater
+# from https://github.com/openai/preparedness/blob/main/project/paperbench/paperbench/utils.py
+class CustomFormatter(logging.Formatter):
+    def format(self, record):
+        levelname = record.levelname
+        message = record.getMessage()
+
+        level_colors = {
+            "DEBUG": "\033[38;5;39m",
+            "INFO": "\033[38;5;15m",
+            "WARNING": "\033[38;5;214m",
+            "ERROR": "\033[38;5;203m",
+            "CRITICAL": "\033[1;38;5;231;48;5;197m",
+        }
+
+        level_color = level_colors.get(levelname, "\033[0m")
+        record.levelname = f"{level_color}{levelname:<8}\033[0m"
+        record.asctime = f"\033[38;5;240m{self.formatTime(record, self.datefmt)}\033[0m"
+        record.custom_location = (
+            f"\033[38;5;240m{record.name}.{record.funcName}:{record.lineno}\033[0m"
+        )
+        record.msg = f"{level_color}{message}\033[0m"
+
+        return super().format(record)
 
 
 class DataSource(Enum):
@@ -17,7 +48,14 @@ class ControlItem(Enum):
     POLYGON = 2
     ZOOM_IN = 3
     ZOOM_OUT = 4
-    ROI = 4
+    ROI = 5
+    STAR = 6
+
+
+class ModelPrompts(Enum):
+    BOX = 0
+    POINT = 1
+    TEXT = 2
 
 
 class ShapeDelegate(QStyledItemDelegate):
@@ -48,15 +86,42 @@ class ShapeDelegate(QStyledItemDelegate):
         return QSize(50, 56)
 
 
+# from https://github.com/openai/preparedness/blob/main/project/paperbench/paperbench/utils.py
+def get_logger(name: Optional[str] = None):
+    logger = logging.getLogger(name)
+    logger.setLevel(logging.DEBUG)
+
+    if not logger.hasHandlers():
+        console_handler = logging.StreamHandler()
+        console_handler.setLevel(logging.DEBUG)
+        fmt = "%(asctime)s | %(levelname)s | %(custom_location)s - %(message)s"
+        datefmt = "%Y-%m-%d %H:%M:%S.%f"
+        formatter = CustomFormatter(fmt=fmt, datefmt=datefmt)
+
+        if os.environ.get("DISABLE_COLORED_LOGGING") == "1":
+            formatter = logging.Formatter(fmt=fmt, datefmt=datefmt)
+
+        console_handler.setFormatter(formatter)
+        logger.addHandler(console_handler)
+
+    return logger
+
+
 def pil_to_qimage(pil_image):
     """Convert a PIL Image to a QImage."""
     qt_image = ImageQt.ImageQt(pil_image)
     return qt_image
 
 
+def gray_out_icon(icon):
+    """Convert an icon to a grayed-out version."""
+    pixmap = icon.pixmap(48, 48, QIcon.Mode.Disabled)
+    return QIcon(pixmap)
+
+
 def read_colors(text_file):
     color_dict = {}
-    with open(text_file, "r") as f:
+    with open(os.environ["HOME"] + "/" + text_file, "r") as f:
         for line in f:
             line_cols = line.strip().split(" ")
             color_dict[" ".join(line_cols[3:])] = (
@@ -78,3 +143,13 @@ def is_inside_rect(rect: QRectF, point: QPoint):
     ):
         return False
     return True
+
+
+def get_convex_hull(pred_img: np.ndarray, bg_value: int = 0) -> np.ndarray:
+    xs, ys = np.where(pred_img != bg_value)
+    indices = list(zip(ys, xs))
+    from scipy.spatial import ConvexHull
+
+    hull_indices = ConvexHull(np.array(indices)).vertices
+    convex_hull = np.array([indices[i] for i in hull_indices])
+    return convex_hull

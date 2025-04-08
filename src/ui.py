@@ -1,7 +1,5 @@
 from typing import Optional
-from enum import Enum
 from functools import partial
-from queue import Queue
 from pathlib import Path
 from io import BytesIO
 import os
@@ -13,6 +11,8 @@ from PyQt6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QLineEdit,
+    QTabWidget,
+    QToolBar,
     QVBoxLayout,
     QWidget,
     QFileDialog,
@@ -26,13 +26,30 @@ from PyQt6.QtWidgets import (
     QLabel,
 )
 from PyQt6.QtCore import QFile, Qt, QSize, QPoint
-from PyQt6.QtGui import QPixmap, QIcon, QPainter, QAction, QColor, QKeyEvent
+from PyQt6.QtGui import (
+    QKeySequence,
+    QPixmap,
+    QIcon,
+    QPainter,
+    QAction,
+    QColor,
+    QKeyEvent,
+    QBrush,
+)
 from PyQt6.QtSvg import QSvgRenderer
 
 from .image_viewer import ImageViewer, MaskData
 from .list_item_widget import CustomListItemWidget
-from .threads import ImageLoaderThread, ModelThread, ImageLocalLoaderThread
-from .utils import pil_to_qimage, ShapeDelegate, read_colors, DataSource, ControlItem
+from .threads import ImageLoaderThread, ImageLocalLoaderThread
+from .sam_thread import ModelThread
+from .utils import (
+    pil_to_qimage,
+    read_colors,
+    gray_out_icon,
+    ShapeDelegate,
+    DataSource,
+    ControlItem,
+)
 
 
 class MainWindow(QMainWindow):
@@ -45,29 +62,28 @@ class MainWindow(QMainWindow):
         self.resize(1920, 1080)
 
         self.setFocus()
-        config = self.__load__config("config.yaml")
+        config = self.__load__config("configs/app_config.yaml")
         self.color_dict = read_colors(config["label_colors_file"]) if config else {}
         # Central widget with vertical layout
         central_widget = QWidget()
         layout = QVBoxLayout()
 
-        self.last_directory = config["last_directory"] if config else ""
+        self.last_directory = (
+            os.environ["HOME"] + "/" + config["last_directory"] if config else ""
+        )
         # Mode selection radio buttons
         mode_layout = QHBoxLayout()
         self.model_mode_radio = QRadioButton("Point/Mask Selection (Model)")
         self.manual_mode_radio = QRadioButton("Manual Annotation")
-        self.manual_prompt_combo = QComboBox()
-        self.manual_prompt_combo.addItems(["Points", "Boxes"])
         self.mode_group = QButtonGroup(self)
         self.mode_group.addButton(self.model_mode_radio)
         self.mode_group.addButton(self.manual_mode_radio)
         mode_layout.addWidget(self.model_mode_radio)
         mode_layout.addWidget(self.manual_mode_radio)
-        mode_layout.addWidget(self.manual_prompt_combo)
         layout.addLayout(mode_layout)
 
         # Set default mode
-        self.model_mode_radio.setChecked(True)
+        self.manual_mode_radio.setChecked(True)
         # Text input for model prompt
         self.text_input = QLineEdit()
         self.text_input.setPlaceholderText("Enter text prompt for the model")
@@ -142,6 +158,7 @@ class MainWindow(QMainWindow):
         mouse_item = QListWidgetItem(mouse_icon, "")
         mouse_item.setToolTip("Cursor")
         mouse_item.setData(0, ControlItem.NORMAL)
+        mouse_item.setData(Qt.ItemDataRole.UserRole, mouse_icon)
 
         self.control_list.addItem(mouse_item)
         box_svg = """
@@ -154,6 +171,7 @@ class MainWindow(QMainWindow):
         box_item = QListWidgetItem(box_icon, "")
         box_item.setToolTip("Box")
         box_item.setData(0, ControlItem.BOX)
+        box_item.setData(Qt.ItemDataRole.UserRole, box_icon)
 
         self.control_list.addItem(box_item)
 
@@ -167,6 +185,7 @@ class MainWindow(QMainWindow):
         polygon_item = QListWidgetItem(polygon_icon, "")
         polygon_item.setToolTip("Polygon")
         polygon_item.setData(0, ControlItem.POLYGON)
+        polygon_item.setData(Qt.ItemDataRole.UserRole, polygon_icon)
 
         self.control_list.addItem(polygon_item)
 
@@ -184,10 +203,12 @@ class MainWindow(QMainWindow):
             <line x1="15" y1="15" x2="22" y2="22" stroke="white" stroke-width="2"/>
         </svg>
         """
-        zoom_icon = self.svg_to_icon(zoom_in_svg, 48)
-        zoom_in_item = QListWidgetItem(zoom_icon, "")
-        zoom_in_item.setToolTip("Zoom")
+        zoom_in_icon = self.svg_to_icon(zoom_in_svg, 48)
+        zoom_in_item = QListWidgetItem(zoom_in_icon, "")
+        zoom_in_item.setToolTip("Zoom In")
         zoom_in_item.setData(0, ControlItem.ZOOM_IN)
+        zoom_in_item.setData(Qt.ItemDataRole.UserRole, zoom_in_icon)
+
         self.control_list.addItem(zoom_in_item)
 
         zoom_out_svg = """
@@ -203,10 +224,12 @@ class MainWindow(QMainWindow):
             <line x1="15" y1="15" x2="22" y2="22" stroke="white" stroke-width="2"/>
         </svg>
         """
-        zoom_icon = self.svg_to_icon(zoom_out_svg, 48)
-        zoom_out_item = QListWidgetItem(zoom_icon, "")
-        zoom_out_item.setToolTip("Zoom")
+        zoom_out_icon = self.svg_to_icon(zoom_out_svg, 48)
+        zoom_out_item = QListWidgetItem(zoom_out_icon, "")
+        zoom_out_item.setToolTip("Zoom Out")
         zoom_out_item.setData(0, ControlItem.ZOOM_OUT)
+        zoom_out_item.setData(Qt.ItemDataRole.UserRole, zoom_out_icon)
+
         self.control_list.addItem(zoom_out_item)
 
         roi_region_svg = """
@@ -223,8 +246,36 @@ class MainWindow(QMainWindow):
         roi_item = QListWidgetItem(roi_icon, "")
         roi_item.setToolTip("Select ROI")
         roi_item.setData(0, ControlItem.ROI)
+        roi_item.setData(Qt.ItemDataRole.UserRole, roi_icon)
+
         self.control_list.addItem(roi_item)
 
+        star_svg = """
+            <svg width="40" height="40" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+      <polygon points="50,5 61,39 98,39 67,60 78,95 50,75 22,95 33,60 2,39 39,39"
+             fill="none" stroke="white" stroke-width="5"/>
+    </svg>
+        """
+        star_icon = self.svg_to_icon(star_svg, 48)
+        star_item = QListWidgetItem(star_icon, "")
+        star_item.setToolTip("Point")
+        star_item.setData(0, ControlItem.STAR)
+        star_item.setFlags(star_item.flags() & ~Qt.ItemFlag.ItemIsSelectable)
+        star_item.setData(Qt.ItemDataRole.UserRole, star_icon)
+
+        self.control_list.addItem(star_item)
+
+        self.control_list_dict = {
+            "manual": [
+                mouse_item,
+                box_item,
+                polygon_item,
+                zoom_in_item,
+                zoom_out_item,
+                roi_item,
+            ],
+            "model": [mouse_item, box_item, star_item],
+        }
         self.control_list.setStyleSheet(
             """
             QListWidget::item {
@@ -239,18 +290,23 @@ class MainWindow(QMainWindow):
         self.control_dock.setWidget(self.control_list)
         self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self.control_dock)
         # Connect mode toggle to update ImageViewer and button state
-        self.manual_prompt_combo.currentTextChanged.connect(self.update_prompt_mode)
         self.model_mode_radio.toggled.connect(self.update_mode)
         self.manual_mode_radio.toggled.connect(self.update_mode)
 
         # Right dock widget for object list
-        self.object_dock = QDockWidget("Objects", self)
+        self.object_dock = QDockWidget("", self)
+        self.anno_widget = QTabWidget()
+        self.anno_widget.setStyleSheet("QTabWidget{  border:none;}")
         self.object_dock.setFeatures(
             QDockWidget.DockWidgetFeature.DockWidgetMovable
             | QDockWidget.DockWidgetFeature.DockWidgetFloatable
         )
         self.object_dock.setMinimumWidth(350)
         self.object_list = QListWidget()
+        self.anno_widget.addTab(self.object_list, "Objects")
+
+        self.issues_list = QListWidget()
+        self.anno_widget.addTab(self.issues_list, "Issues")
         # self.object_list.setStyleSheet("QListWidget::item { border: 1px solid gray }")
         # self.object_list.setSizePolicy(
         #     QSizePolicy.Expanding,
@@ -259,7 +315,7 @@ class MainWindow(QMainWindow):
         # self.object_list.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.object_list.setResizeMode(QListView.ResizeMode.Adjust)
         self.object_list.currentRowChanged.connect(self.on_object_selected)
-        self.object_dock.setWidget(self.object_list)
+        self.object_dock.setWidget(self.anno_widget)
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.object_dock)
 
         # Menu bar
@@ -274,9 +330,27 @@ class MainWindow(QMainWindow):
 
         # Toolbar with actions
         self.toolbar = self.addToolBar("Tools")
-        self.run_model_action = QAction("Run Model", self)
-        self.run_model_action.triggered.connect(self.run_model)
-        self.toolbar.addAction(self.run_model_action)
+        if self.toolbar:
+            self.toolbar.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
+            self.run_model_action = QAction("Run Model", self)
+            self.run_model_action.setIcon(QIcon("assets/neural_net.svg"))
+            self.run_model_action.triggered.connect(self.run_model)
+            self.toolbar.addAction(self.run_model_action)
+
+            self.undo_action = QAction("Undo", self)
+            self.undo_action.setIcon(QIcon("assets/undo.svg"))
+            self.undo_action.setShortcut(
+                QKeySequence(Qt.Key.Key_Control + Qt.Key.Key_R)
+            )
+            self.redo_action = QAction("Redo", self)
+            self.redo_action.setIcon(QIcon("assets/redo.svg"))
+            self.undo_action.setShortcut(
+                QKeySequence(Qt.Key.Key_Control + Qt.Key.Key_Shift + Qt.Key.Key_R)
+            )
+            self.undo_action.setEnabled(False)
+            self.redo_action.setEnabled(False)
+            self.toolbar.addAction(self.undo_action)
+            self.toolbar.addAction(self.redo_action)
 
         # Data storage
         self.prev_selected_obj_idx = None
@@ -319,15 +393,37 @@ class MainWindow(QMainWindow):
         """Update ImageViewer mode and Run Model button state based on radio selection."""
         if self.model_mode_radio.isChecked():
             self.image_viewer.set_mode("model")
-            self.manual_prompt_combo.setEnabled(True)
             self.run_model_action.setEnabled(True)
-            self.control_dock.setEnabled(False)
-            self.control_list.setCurrentRow(0)  # Clear selection in model mode
+
+            # Enable and disable items based on mode
+            for item in self.control_list_dict["manual"]:
+                # Set the grayed-out icon
+                item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsSelectable)
+                item.setIcon(gray_out_icon(item.data(Qt.ItemDataRole.UserRole)))
+
+            for item in self.control_list_dict["model"]:
+                # Restore the original icon
+                item.setFlags(item.flags() | Qt.ItemFlag.ItemIsSelectable)
+                item.setIcon(item.data(Qt.ItemDataRole.UserRole))
+
         else:  # manual_mode_radio is checked
             self.image_viewer.set_mode("manual")
+            self.image_viewer.clear_prompts()
             self.run_model_action.setEnabled(False)
-            self.manual_prompt_combo.setEnabled(False)
-            self.control_dock.setEnabled(True)
+
+            # Enable and disable items based on mode
+            for item in self.control_list_dict["model"]:
+                # Set the grayed-out icon
+                item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsSelectable)
+                item.setIcon(gray_out_icon(item.data(Qt.ItemDataRole.UserRole)))
+
+            for item in self.control_list_dict["manual"]:
+                # Restore the original icon
+                item.setFlags(item.flags() | Qt.ItemFlag.ItemIsSelectable)
+                item.setIcon(item.data(Qt.ItemDataRole.UserRole))
+
+        # Refresh the control list to apply visual changes
+        self.control_list.viewport().update()
 
     def load_url_list(self):
         """Load a text file containing image URLs."""
@@ -371,7 +467,7 @@ class MainWindow(QMainWindow):
             self.load_images_local(self.urls[self.start_idx : self.end_idx])
 
     def update_prompt_mode(self, text):
-        self.image_viewer.setMousePrompt(text)
+        self.image_viewer.switch_model_prompt(text)
 
     def show_label_combobox(self):
         """Show a QComboBox with labels at the mouse position."""
@@ -480,18 +576,18 @@ class MainWindow(QMainWindow):
         if not self.current_image:
             return
         text = self.text_input.text()
-        points = [[p.x(), p.y()] for p in self.image_viewer.points]
-        boxes = [
-            [b[0].x(), b[0].y(), b[1].x(), b[1].y()] for b in self.image_viewer.boxes
-        ]
-        self.model_thread = ModelThread(self.current_image, text, points, boxes)
+        points = self.image_viewer.prompt_star_coords
+        boxes = self.image_viewer.prompt_box_coords
+        self.model_thread = ModelThread(
+            self.current_image, text, points, boxes, device="mps"
+        )
         self.model_thread.result_ready.connect(self.on_model_result)
         self.model_thread.start()
         # TODO: Change this to something like thread.join() or emitting a signal from thread
 
     def on_model_result(self, polygons):
         """Display model results and populate the object list."""
-        # self.image_viewer.display_polygons(polygons)
+        self.image_viewer.display_pred_polys(polygons)
         for i in range(len(polygons)):
             custom_widget = CustomListItemWidget(self.color_dict.keys())
             item = QListWidgetItem()
@@ -500,6 +596,7 @@ class MainWindow(QMainWindow):
             item.setFlags(item.flags() | Qt.ItemFlag.ItemIsEditable)
             self.object_list.addItem(item)
             self.object_list.setItemWidget(item, custom_widget)
+        self.image_viewer.clear_prompts()
 
     def change_object_label(self, poly_idx, label_text):
         self.image_viewer.changePolygonLabel(poly_idx, label_text)
@@ -542,9 +639,10 @@ class MainWindow(QMainWindow):
         """Update the ImageViewer's control based on list selection."""
         control = item.data(0)  # "box" or "polygon"
         if control == ControlItem.BOX or control == ControlItem.POLYGON:
-            self.show_label_combobox()
+            if self.manual_mode_radio.isChecked():
+                self.show_label_combobox()
             self.image_viewer.set_control(control)
-        if control == ControlItem.ROI:
+        elif control == ControlItem.ROI:
             self.image_viewer.set_control(control)
         elif control == ControlItem.ZOOM_IN:
             self.image_viewer.zoom(control)
@@ -553,6 +651,8 @@ class MainWindow(QMainWindow):
             self.image_viewer.zoom(control)
             self.control_list.setCurrentRow(0)
         elif control == ControlItem.NORMAL:
+            self.image_viewer.set_control(control)
+        elif control == ControlItem.STAR:
             self.image_viewer.set_control(control)
 
     def set_control(self, control: ControlItem):

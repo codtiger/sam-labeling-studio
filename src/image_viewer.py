@@ -1,4 +1,7 @@
 from typing import Optional
+import logging
+import math
+
 from PyQt6.QtWidgets import (
     QGraphicsPolygonItem,
     QGraphicsView,
@@ -25,11 +28,16 @@ from PyQt6.QtGui import (
     QPainter,
     QMouseEvent,
     QWheelEvent,
+    QPainterPath,
 )
+import numpy as np
 
 from dataclasses import dataclass
 
-from .utils import is_inside_rect, ControlItem
+from .utils import is_inside_rect, ControlItem, ModelPrompts, get_logger
+
+logger = get_logger(__name__)
+logger.setLevel(logging.DEBUG)
 
 
 class VertexItem(QGraphicsEllipseItem):
@@ -67,6 +75,15 @@ class ImageViewer(QGraphicsView):
     object_added = pyqtSignal(MaskData)
     control_change = pyqtSignal(ControlItem)
 
+    COLOR_CYCLE = [
+        Qt.GlobalColor.black,
+        Qt.GlobalColor.red,
+        Qt.GlobalColor.blue,
+        Qt.GlobalColor.yellow,
+        Qt.GlobalColor.green,
+        Qt.GlobalColor.cyan,
+    ]
+
     def __init__(self, color_dict):
         super().__init__()
         self.image_scene = QGraphicsScene()
@@ -88,17 +105,30 @@ class ImageViewer(QGraphicsView):
         self.temp_lines = []  # Temporary lines connecting points
         self.temp_polygon = None  # Temporary shaded polygon during drawing
         self.mode = "model"
+        # MANUAL MODE params
         self.current_control = ControlItem.NORMAL  # Current shape for manual annotation
         self.prev_shape = None  # Previous shape for pressing N
         self.shaded_poly = None
         self.point_to_shape: dict = {}
+        # MODEL MODE params
+        self.prompt_mode = ModelPrompts.POINT
+        self.num_prompt_objs = 0
+        # one per image, temporary
+        self.prompt_star_coords = [[]]
+        self.prompt_box_coords = []
+        self.prompt_stars = []
+        self.prompt_boxes = []
+
+        self.current_prompt_color = ImageViewer.COLOR_CYCLE[0]
 
         self.dragging_vertex = None
         self.last_pan_pos = None
         self.start_roi_pos = QPoint()
+        self.start_box_pos = QPoint()
 
         self.is_panning = False
         self.is_selecting_roi = False
+        self.is_prompt_box = False
 
         self.rubber_band: QRubberBand
 
@@ -123,6 +153,10 @@ class ImageViewer(QGraphicsView):
     def set_mode(self, mode):
         """Set the current mode: 'model' or 'manual'."""
         self.mode = mode
+        if self.mode == "manual" and self.image_item:
+            self.image_item.setOpacity(1.0)
+        elif self.mode == "model" and self.image_item:
+            self.image_item.setOpacity(0.4)
         self.clear_temp()  # Clear temporary annotations when switching modes
 
     def clear_temp(self):
@@ -134,6 +168,14 @@ class ImageViewer(QGraphicsView):
         if self.temp_polygon:
             self.image_scene.removeItem(self.temp_polygon)
             self.temp_polygon = None
+
+    def clear_prompts(self):
+        self.num_prompt_objs = 0
+        for star_item in self.prompt_stars:
+            self.image_scene.removeItem(star_item)
+        for rect_item in self.prompt_boxes:
+            self.image_scene.removeItem(rect_item)
+        self.prompt_boxes, self.prompt_boxes = [], []
 
     def set_image(self, pixmap):
         """Set the image to display and fit it to the view."""
@@ -155,17 +197,30 @@ class ImageViewer(QGraphicsView):
 
             # Center the image in the view
             self.centerOn(self.image_item)
+            if self.mode == "model":
+                self.image_item.setOpacity(0.2)
             # self.fitInView(self.image_item, Qt.AspectRatioMode.KeepAspectRatio)
 
     def set_control(self, control):
+        self.current_control = control
         if self.mode == "manual":
-            self.current_control = control
             if control == ControlItem.NORMAL:
                 self.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)
             else:
                 self.setDragMode(QGraphicsView.DragMode.NoDrag)
                 self.setCursor(Qt.CursorShape.CrossCursor)
-            self.clear_temp()
+        if self.mode == "model":
+            if control == ControlItem.NORMAL:
+                self.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)
+            elif control == ControlItem.STAR:
+                self.prompt_mode = ModelPrompts.POINT
+                self.setDragMode(QGraphicsView.DragMode.NoDrag)
+                self.setCursor(Qt.CursorShape.CrossCursor)
+            elif control == ControlItem.BOX:
+                self.prompt_mode = ModelPrompts.BOX
+                self.setDragMode(QGraphicsView.DragMode.NoDrag)
+                self.setCursor(Qt.CursorShape.CrossCursor)
+        self.clear_temp()
 
     def clear(self):
         """Clear all annotations and reset the scene."""
@@ -184,29 +239,31 @@ class ImageViewer(QGraphicsView):
             self.image_scene.removeItem(self.temp_polygon)
             del self.temp_polygon
             self.temp_polygon = None
+        self.clear_prompts()
         self.object_lock.unlock()
 
-    def display_polygons(self, mask_data_list: list[MaskData]):
+    def display_pred_polys(self, mask_arr: list[np.array]):
         """Display polygons returned by the model with editable vertices."""
         # if self.image_item:
         #     self.image_item.setOpacity(0.5)
         self.polygon_items = []
-        for mask_data in mask_data_list:
-            qpoly = QPolygonF([QPointF(x, y) for x, y in mask_data.points])
+        for mask in mask_arr:
+            qpoly = QPolygonF([QPointF(x, y) for x, y in mask])
             polygon_item = self.image_scene.addPolygon(
                 qpoly,
-                pen=QColor(*self.color_dict[mask_data.label]),
+                pen=QColor(*self.color_dict["background"]),
                 # brush=QBrush(QColor(0, 255, 0, 128)),
             )
             if polygon_item:
-                polygon_item.setData(0, mask_data.id)
-                polygon_item.setData(1, mask_data.label)
+                self.mask_id += 1
+                polygon_item.setData(0, self.mask_id)
+                polygon_item.setData(1, "background")
                 self.polygon_items.append(polygon_item)
                 # Add movable vertices
                 for i, point in enumerate(qpoly):
                     vertex_item = VertexItem(0, 0, 20, 20)
                     vertex_item.setPos(point.x() - 3, point.y() - 3)
-                    vertex_item.setBrush(QColor(*self.color_dict[mask_data.label]))
+                    vertex_item.setBrush(QColor(*self.color_dict["background"]))
                     vertex_item.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable)
                     vertex_item.setData(0, polygon_item)  # Reference to polygon
                     vertex_item.setData(1, i)  # Index in polygon
@@ -283,8 +340,38 @@ class ImageViewer(QGraphicsView):
                 self.rubber_band.setGeometry(QRect(self.start_roi_pos, QSize()))
                 self.rubber_band.show()
 
-        elif self.mode == "box":
-            self.current_box = [pos, pos]
+        elif self.mode == "model":
+            if event.button() == Qt.MouseButton.LeftButton:
+                if self.prompt_mode == ModelPrompts.POINT:
+                    self.prompt_star_coords[-1].append((pos.x(), pos.y()))
+                    # Draw a star at that location
+                    star_path = QPainterPath()
+                    center = pos
+                    outer_radius = 15
+                    inner_radius = 8
+                    for i in range(10):
+                        angle = i * 36  # 36 degrees between each point
+                        radius = outer_radius if i % 2 == 0 else inner_radius
+                        x = center.x() + radius * math.cos(math.radians(angle))
+                        y = center.y() + radius * math.sin(math.radians(angle))
+                        if i == 0:
+                            star_path.moveTo(x, y)
+                        else:
+                            star_path.lineTo(x, y)
+                    star_path.closeSubpath()
+                    star_item = self.image_scene.addPath(
+                        star_path,
+                        QPen(Qt.GlobalColor.yellow),
+                        QBrush(self.current_prompt_color),
+                    )
+                    self.prompt_stars.append(star_item)
+                elif self.prompt_mode == ModelPrompts.BOX:
+                    self.is_prompt_box = True
+                    self.start_box_pos = event.pos()
+                    self.rubber_band = QRubberBand(QRubberBand.Shape.Rectangle, self)
+                    self.rubber_band.setGeometry(QRect(self.start_box_pos, QSize()))
+                    self.rubber_band.show()
+
         elif event.button() == Qt.MouseButton.RightButton:
             pass
             # Toggle mode (for simplicity; could use buttons)
@@ -334,6 +421,10 @@ class ImageViewer(QGraphicsView):
                 rect = QRect(self.start_roi_pos, event.pos()).normalized()
                 self.rubber_band.setGeometry(rect)
 
+            elif self.is_prompt_box:
+                rect = QRect(self.start_box_pos, event.pos()).normalized()
+                self.rubber_band.setGeometry(rect)
+
             elif len(self.image_scene.items()) > 1:
                 item = self.image_scene.itemAt(pos, self.transform())
                 if isinstance(item, QGraphicsPolygonItem):
@@ -373,12 +464,28 @@ class ImageViewer(QGraphicsView):
                 self.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)
                 self.current_control = ControlItem.NORMAL
                 self.control_change.emit(ControlItem.NORMAL)
+            elif self.is_prompt_box:
+                rect_view = self.rubber_band.geometry()
+                self.rubber_band.hide()
+                self.rubber_band.deleteLater()
 
-        if (
-            event.button() == Qt.MouseButton.RightButton
-            and self.mode == "manual"
-            and self.temp_points
-        ):
+                top_left = self.mapToScene(rect_view.topLeft())
+                bottom_right = self.mapToScene(rect_view.bottomRight())
+                self.prompt_box_coords.append(
+                    [top_left.x(), top_left.y(), bottom_right.x(), bottom_right.y()]
+                )
+                pen = QPen(QColor.fromRgb(220, 12, 12))
+                pen.setWidth(5)
+                rect = self.image_scene.addRect(
+                    QRectF(top_left, bottom_right).normalized(), pen=pen
+                )
+                self.prompt_boxes.append(rect)
+                self.is_prompt_box = False
+                self.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)
+                self.current_control = ControlItem.NORMAL
+                self.control_change.emit(ControlItem.NORMAL)
+
+        if event.button() == Qt.MouseButton.RightButton and self.mode == "manual":
             if self.temp_points:
                 _ = self.temp_points.pop()
                 self.image_scene.removeItem(self.temp_ellipses.pop())
@@ -434,10 +541,11 @@ class ImageViewer(QGraphicsView):
         zoomOutFactor = 1 / zoomInFactor
 
         # Zoom
-        if in_or_out is ControlItem.ZOOM_IN:
+        if in_or_out == ControlItem.ZOOM_IN:
             zoom_factor = zoomInFactor
         else:
             zoom_factor = zoomOutFactor
+            logger.warning(f"ZOOMING OUT {zoomOutFactor}")
 
         # Apply zoom
         self.scale(zoom_factor, zoom_factor)
@@ -534,7 +642,7 @@ class ImageViewer(QGraphicsView):
                     self.current_control = ControlItem.NORMAL
                     self.setCursor(Qt.CursorShape.ArrowCursor)
             # Remove the current temp poly upon pressing ESC
-            elif event.key() == Qt.Key.Key_Escape and self.temp_points:
+            elif event.key() == Qt.Key.Key_Escape:
                 if self.temp_polygon:
                     self.image_scene.removeItem(self.temp_polygon)
                     for line in self.temp_lines:
@@ -548,7 +656,19 @@ class ImageViewer(QGraphicsView):
 
                 # return to NORMAL mode
                 self.current_control = ControlItem.NORMAL
+                self.control_change.emit(ControlItem.NORMAL)
                 self.setCursor(Qt.CursorShape.ArrowCursor)
+        if self.mode == "model":
+            if event.key() == Qt.Key.Key_N:
+                self.prompt_star_coords.append([])
+                self.num_prompt_objs = (
+                    self.num_prompt_objs + 1
+                    if self.num_prompt_objs < len(ImageViewer.COLOR_CYCLE)
+                    else 0
+                )
+                self.current_prompt_color = ImageViewer.COLOR_CYCLE[
+                    self.num_prompt_objs
+                ]
 
         return super().keyPressEvent(event)
 
