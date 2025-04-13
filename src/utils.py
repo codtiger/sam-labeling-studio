@@ -2,6 +2,7 @@ from enum import Enum
 import logging
 from typing import Optional
 import os
+from dataclasses import dataclass
 
 from PyQt6.QtGui import QImage, QColor, QStyleHints, QIcon
 from PyQt6.QtCore import QRectF, Qt, QSize, QRect, QPoint
@@ -58,6 +59,14 @@ class ModelPrompts(Enum):
     TEXT = 2
 
 
+@dataclass
+class MaskData(object):
+    def __init__(self, mask_id: int, points: list, label):
+        self.id = mask_id
+        self.points = points
+        self.label = label
+
+
 class ShapeDelegate(QStyledItemDelegate):
     """Custom delegate to center icons in QListWidget items."""
 
@@ -91,6 +100,7 @@ def get_logger(name: Optional[str] = None):
     logger = logging.getLogger(name)
     logger.setLevel(logging.DEBUG)
 
+    logger.propagate = False
     if not logger.hasHandlers():
         console_handler = logging.StreamHandler()
         console_handler.setLevel(logging.DEBUG)
@@ -148,8 +158,10 @@ def is_inside_rect(rect: QRectF, point: QPoint):
 def get_convex_hull(pred_img: np.ndarray, bg_value: int = 0) -> np.ndarray:
     xs, ys = np.where(pred_img != bg_value)
     indices = list(zip(ys, xs))
-    from scipy.spatial import ConvexHull
+    # from scipy.spatial import ConvexHull
+    import smallest_kgon as s_kgon
 
-    hull_indices = ConvexHull(np.array(indices)).vertices
-    convex_hull = np.array([indices[i] for i in hull_indices])
-    return convex_hull
+    # hull_indices = ConvexHull(np.array(indices)).vertices
+    # convex_hull = np.array([indices[i] for i in hull_indices])
+    hull_points = s_kgon.smallest_kgon(np.array(indices).astype(np.float32), k=6)
+    return hull_points

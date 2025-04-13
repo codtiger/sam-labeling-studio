@@ -32,9 +32,8 @@ from PyQt6.QtGui import (
 )
 import numpy as np
 
-from dataclasses import dataclass
 
-from .utils import is_inside_rect, ControlItem, ModelPrompts, get_logger
+from .utils import is_inside_rect, ControlItem, ModelPrompts, MaskData, get_logger
 
 logger = get_logger(__name__)
 logger.setLevel(logging.DEBUG)
@@ -61,15 +60,6 @@ class VertexItem(QGraphicsEllipseItem):
         return super().itemChange(change, value)
 
 
-@dataclass
-class MaskData(object):
-    def __init__(self, mask_id: int, points: list, lines: list, label):
-        self.id = mask_id
-        self.lines = lines
-        self.points = points
-        self.label = label
-
-
 class ImageViewer(QGraphicsView):
 
     object_added = pyqtSignal(MaskData)
@@ -92,14 +82,13 @@ class ImageViewer(QGraphicsView):
         self.object_lock = QReadWriteLock()
 
         self.color_dict = color_dict
-        self.__last__label = None
+        self.__last_label__ = None
         self.image_item = None  # QGraphicsPixmapItem for the image
-        self.points = []  # List of QPointF for point annotations
+        self.id_to_poly = {}  # mask_id --> poly dict
         self.boxes = []  # List of [start, end] QPointF pairs for box annotations
         self.current_box = None  # Temporary box during drawing
         self.polygon_items = []  # List of QGraphicsPolygonItem for model results
         self.mask_id = 0
-        # self.mode = "Points"  # Current interaction mode: "point" or "box"
 
         self.temp_points = []  # Temporary points for current polygon
         self.temp_lines = []  # Temporary lines connecting points
@@ -148,7 +137,7 @@ class ImageViewer(QGraphicsView):
         # self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
 
     def set_last_label(self, label):
-        self.__last__label = label
+        self.__last_label__ = label
 
     def set_mode(self, mode):
         """Set the current mode: 'model' or 'manual'."""
@@ -171,11 +160,13 @@ class ImageViewer(QGraphicsView):
 
     def clear_prompts(self):
         self.num_prompt_objs = 0
+        self.current_prompt_color = self.COLOR_CYCLE[0]
         for star_item in self.prompt_stars:
             self.image_scene.removeItem(star_item)
         for rect_item in self.prompt_boxes:
             self.image_scene.removeItem(rect_item)
-        self.prompt_boxes, self.prompt_boxes = [], []
+        self.prompt_stars, self.prompt_boxes = [], []
+        self.prompt_star_coords, self.prompt_box_coords = [[]], []
 
     def set_image(self, pixmap):
         """Set the image to display and fit it to the view."""
@@ -227,7 +218,7 @@ class ImageViewer(QGraphicsView):
         self.object_lock.lockForWrite()
         self.image_scene.clear()
         self.image_item = None
-        self.points = []
+        self.id_to_poly = {}
         self.boxes = []
         self.shaded_poly = None
         self.current_box = None
@@ -242,11 +233,44 @@ class ImageViewer(QGraphicsView):
         self.clear_prompts()
         self.object_lock.unlock()
 
-    def display_pred_polys(self, mask_arr: list[np.array]):
-        """Display polygons returned by the model with editable vertices."""
+    def display_polygons(self, mask_data_list: list[MaskData]):
+        """Display polygons loaded by the main ui's object list"""
         # if self.image_item:
         #     self.image_item.setOpacity(0.5)
         self.polygon_items = []
+        for mask_data in mask_data_list:
+            qpoly = QPolygonF([QPointF(x, y) for x, y in mask_data.points])
+            polygon_item = self.image_scene.addPolygon(
+                qpoly,
+                pen=QColor(*self.color_dict[mask_data.label]),
+                # brush=QBrush(QColor(0, 255, 0, 128)),
+            )
+            if polygon_item:
+                polygon_item.setData(0, mask_data.id)  # id
+                polygon_item.setData(1, mask_data.label)  # label
+                vertices = []
+                self.id_to_poly[mask_data.id] = polygon_item
+                self.polygon_items.append(polygon_item)
+                # Add movable vertices
+                for i, point in enumerate(qpoly):
+                    vertex_item = VertexItem(0, 0, 20, 20)
+                    vertex_item.setPos(point.x() - 3, point.y() - 3)
+                    vertex_item.setBrush(QColor(*self.color_dict[mask_data.label]))
+                    vertex_item.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable)
+                    vertex_item.setData(0, polygon_item)  # Reference to polygon
+                    vertex_item.setData(1, i)  # Index in polygon
+                    vertices.append(vertex_item)
+                    self.image_scene.addItem(vertex_item)
+                polygon_item.setData(2, vertices)
+
+    def add_prediction_polys(self, mask_arr: list[np.ndarray]):
+        """Display polygons returned by the model with editable vertices.
+        IMPORTANT: Need to be assigned mask ids by the image viewer"""
+
+        # if self.image_item:
+        #     self.image_item.setOpacity(0.5)
+        self.polygon_items = []
+        masks: list[MaskData] = []
         for mask in mask_arr:
             qpoly = QPolygonF([QPointF(x, y) for x, y in mask])
             polygon_item = self.image_scene.addPolygon(
@@ -255,10 +279,17 @@ class ImageViewer(QGraphicsView):
                 # brush=QBrush(QColor(0, 255, 0, 128)),
             )
             if polygon_item:
-                self.mask_id += 1
+                mask_data = MaskData(
+                    mask_id=self.mask_id,
+                    points=[QPoint(x, y) for x, y in mask],
+                    label="background",
+                )
+                masks.append(mask_data)
                 polygon_item.setData(0, self.mask_id)
                 polygon_item.setData(1, "background")
+                vertices = []
                 self.polygon_items.append(polygon_item)
+                self.id_to_poly[self.mask_id] = polygon_item
                 # Add movable vertices
                 for i, point in enumerate(qpoly):
                     vertex_item = VertexItem(0, 0, 20, 20)
@@ -268,33 +299,50 @@ class ImageViewer(QGraphicsView):
                     vertex_item.setData(0, polygon_item)  # Reference to polygon
                     vertex_item.setData(1, i)  # Index in polygon
                     self.image_scene.addItem(vertex_item)
+                    vertices.append(vertex_item)
+                polygon_item.setData(2, vertices)
+                self.mask_id += 1
+        return masks
 
-    def highlight_polygon(self, index):
+    def highlight_polygon(self, mask_id):
         """Highlight the selected polygon."""
         # TODO: handle deletion of polygons
         self.object_lock.lockForRead()
-        item = self.polygon_items[index]
-        item.setBrush(QBrush(QColor(*self.color_dict[item.data(1)] + (50,))))
+        item = self.id_to_poly[mask_id]
+        if item:
+            item.setBrush(QBrush(QColor(*self.color_dict[item.data(1)] + (50,))))
         self.object_lock.unlock()
 
-    def unhighlight_polygon(self, index):
+    def unhighlight_polygon(self, mask_id):
         """Clear the highlighted polygon."""
         # TODO: handle deletion of polygons
         self.object_lock.lockForRead()
-        item: QGraphicsPolygonItem = self.polygon_items[index]
-        item.setBrush(Qt.GlobalColor.transparent)
+        item = self.id_to_poly[mask_id]
+        if item:
+            item.setBrush(Qt.GlobalColor.transparent)
         self.object_lock.unlock()
 
-    def changePolygonLabel(self, index, label):
-        """A label change that should case the polygon color change"""
-        self.object_lock.lockForRead()
-        item: QGraphicsPolygonItem = self.polygon_items[index]
-        item.setData(1, label)
-        item.setPen(QColor(*self.color_dict[item.data(1)]))
-        item.setBrush(Qt.GlobalColor.transparent)
-        for vertex_item in item.data(2):
-            vertex_item.setBrush(QBrush(QColor(*self.color_dict[item.data(1)])))
+    def removePolygon(self, mask_id):
+        self.object_lock.lockForWrite()
+        poly_item: QGraphicsItem = self.id_to_poly[mask_id]
+        for vertex_item in poly_item.data(2):
+            self.image_scene.removeItem(vertex_item)
+            vertex_item = None
+        self.image_scene.removeItem(poly_item)
+        self.id_to_poly[mask_id] = None
+        self.object_lock.unlock()
 
+    def changePolygonLabel(self, mask_id, label):
+        """A label change that should case the polygon color change"""
+        self.object_lock.lockForWrite()
+        # TODO: handle deletion of polygons
+        item: Optional[QGraphicsPolygonItem] = self.id_to_poly[mask_id]
+        if item:
+            item.setData(1, label)
+            item.setPen(QColor(*self.color_dict[item.data(1)]))
+            item.setBrush(Qt.GlobalColor.transparent)
+            for vertex_item in item.data(2):
+                vertex_item.setBrush(QBrush(QColor(*self.color_dict[item.data(1)])))
         self.object_lock.unlock()
 
     def mousePressEvent(self, event):
@@ -396,7 +444,7 @@ class ImageViewer(QGraphicsView):
             self.temp_polygon = self.image_scene.addPolygon(
                 temp_poly,
                 pen=QPen(Qt.GlobalColor.black),
-                brush=QBrush(QColor(*self.color_dict[self.__last__label] + (50,))),
+                brush=QBrush(QColor(*self.color_dict[self.__last_label__] + (50,))),
             )
         else:
             if self.dragging_vertex:
@@ -501,7 +549,7 @@ class ImageViewer(QGraphicsView):
                 self.temp_polygon = self.image_scene.addPolygon(
                     temp_poly,
                     pen=QPen(Qt.GlobalColor.black),
-                    brush=QBrush(QColor(*self.color_dict[self.__last__label] + (50,))),
+                    brush=QBrush(QColor(*self.color_dict[self.__last_label__] + (50,))),
                 )
         return super().mouseReleaseEvent(event)
 
@@ -592,12 +640,13 @@ class ImageViewer(QGraphicsView):
                     final_poly = QPolygonF(self.temp_points)
                     polygon_item = self.image_scene.addPolygon(
                         final_poly,
-                        pen=QPen(QColor(*self.color_dict[self.__last__label])),
+                        pen=QPen(QColor(*self.color_dict[self.__last_label__])),
                         # brush=QBrush(QColor(255, 255, 0, 128)),
                     )
                     if polygon_item:
-                        polygon_item.setData(0, self.mask_id)  # poly_id
-                        polygon_item.setData(1, self.__last__label)  # label
+                        polygon_item.setData(0, self.mask_id)
+                        self.id_to_poly[self.mask_id] = polygon_item
+                        polygon_item.setData(1, self.__last_label__)  # label
                         polygon_item.setData(2, [])  # vertices
                         self.polygon_items.append(polygon_item)
 
@@ -606,12 +655,11 @@ class ImageViewer(QGraphicsView):
                         self.image_scene.removeItem(line)
                     for ellipse in self.temp_ellipses:
                         self.image_scene.removeItem(ellipse)
-                        polygon_item.setData(1, self.__last__label)
+                        polygon_item.setData(1, self.__last_label__)
                     mask_data = MaskData(
                         self.mask_id,
                         self.temp_points,
-                        self.temp_lines,
-                        self.__last__label,
+                        self.__last_label__,
                     )
                     self.mask_id += 1
                     # emit new mask to the object list
@@ -626,7 +674,7 @@ class ImageViewer(QGraphicsView):
                         vertex_item = VertexItem(0, 0, 15, 15)
                         vertex_item.setPos(point.x() - 5, point.y() - 5)
                         vertex_item.setBrush(
-                            QBrush(QColor(*self.color_dict[self.__last__label]))
+                            QBrush(QColor(*self.color_dict[self.__last_label__]))
                         )
                         vertex_item.setFlag(
                             QGraphicsItem.GraphicsItemFlag.ItemIsMovable
@@ -663,7 +711,7 @@ class ImageViewer(QGraphicsView):
                 self.prompt_star_coords.append([])
                 self.num_prompt_objs = (
                     self.num_prompt_objs + 1
-                    if self.num_prompt_objs < len(ImageViewer.COLOR_CYCLE)
+                    if self.num_prompt_objs + 1 < len(ImageViewer.COLOR_CYCLE)
                     else 0
                 )
                 self.current_prompt_color = ImageViewer.COLOR_CYCLE[

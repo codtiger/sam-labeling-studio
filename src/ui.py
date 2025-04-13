@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Optional, Union
 from functools import partial
 from pathlib import Path
 from io import BytesIO
@@ -25,7 +25,14 @@ from PyQt6.QtWidgets import (
     QSlider,
     QLabel,
 )
-from PyQt6.QtCore import QFile, Qt, QSize, QPoint
+from PyQt6.QtCore import (
+    Qt,
+    QSize,
+    QPoint,
+    QThread,
+    pyqtSignal,
+)
+from PIL import Image
 from PyQt6.QtGui import (
     QKeySequence,
     QPixmap,
@@ -38,23 +45,30 @@ from PyQt6.QtGui import (
 )
 from PyQt6.QtSvg import QSvgRenderer
 
-from .image_viewer import ImageViewer, MaskData
+from .image_viewer import ImageViewer
 from .list_item_widget import CustomListItemWidget
 from .threads import ImageLoaderThread, ImageLocalLoaderThread
-from .sam_thread import ModelThread
+from .sam_thread import ModelWorker
 from .utils import (
     pil_to_qimage,
     read_colors,
     gray_out_icon,
+    get_logger,
     ShapeDelegate,
     DataSource,
     ControlItem,
+    MaskData,
 )
+
+logger = get_logger("Main UI")
 
 
 class MainWindow(QMainWindow):
 
     MEMORY_LIMIT = 30
+
+    trigger_embbeding = pyqtSignal(Image.Image)
+    trigger_prediction = pyqtSignal(str, list, list)
 
     def __init__(self):
         super().__init__()
@@ -369,6 +383,44 @@ class MainWindow(QMainWindow):
         self.image_viewer.object_added.connect(self.add_to_object_list)
         self.image_viewer.control_change.connect(self.set_control)
 
+        # Initiate model
+        self.model_loaded, self.is_embedded = False, False
+        self.ckpt_path = "weights/sam2.1_hiera_large.pt"
+        self.model_cfg = "configs/sam2.1/sam2.1_hiera_l.yaml"
+        self.model_thread = None
+        self.__init_model_thread__()
+
+    def __init_model_thread__(self):
+        self.model_thread = QThread()
+        self.model_worker = ModelWorker(
+            device="mps", ckpt_path=self.ckpt_path, cfg_path=self.model_cfg
+        )
+        self.model_worker.moveToThread(self.model_thread)
+        self.model_thread.started.connect(self.model_worker.load_model)
+
+        self.model_worker.model_ready.connect(self.on_model_ready)
+        self.model_worker.image_embedded.connect(self.on_image_embedded)
+        self.model_worker.prediction_done.connect(self.on_model_result)
+
+        self.trigger_embbeding.connect(self.model_worker.set_image)
+        self.trigger_prediction.connect(self.model_worker.predict)
+
+        self.model_thread.start()
+
+    # def __calc_embedding__(self, image):
+    #     embedding_worker = EmbeddingWorker(self.model, image)
+    #     embedding_worker.signals.finished.connect(self.store_predictor)
+    #     if self.thread_pool:
+    #         self.thread_pool.start(embedding_worker)
+
+    def on_model_ready(self):
+        logger.warning("MODEL LOADED")
+        self.model_loaded = True
+
+    def on_image_embedded(self):
+        self.run_model_action.setEnabled(True)
+        self.is_embedded = True
+
     def __load__config(self, yaml_path):
 
         with open(yaml_path, "r") as stream:
@@ -393,7 +445,8 @@ class MainWindow(QMainWindow):
         """Update ImageViewer mode and Run Model button state based on radio selection."""
         if self.model_mode_radio.isChecked():
             self.image_viewer.set_mode("model")
-            self.run_model_action.setEnabled(True)
+            if self.is_embedded:
+                self.run_model_action.setEnabled(True)
 
             # Enable and disable items based on mode
             for item in self.control_list_dict["manual"]:
@@ -466,8 +519,8 @@ class MainWindow(QMainWindow):
 
             self.load_images_local(self.urls[self.start_idx : self.end_idx])
 
-    def update_prompt_mode(self, text):
-        self.image_viewer.switch_model_prompt(text)
+    # def update_prompt_mode(self, text):
+    #     self.image_viewer.switch_model_prompt(text)
 
     def show_label_combobox(self):
         """Show a QComboBox with labels at the mouse position."""
@@ -495,7 +548,7 @@ class MainWindow(QMainWindow):
         self.local_thread.image_loaded.connect(self.load_viewer)
         self.local_thread.start()
 
-    def load_viewer(self, image):
+    def load_viewer(self, image: Image.Image):
         """Handle the loaded image by displaying it."""
         self.image_viewer.setEnabled(False)
         self.current_image = image
@@ -507,7 +560,9 @@ class MainWindow(QMainWindow):
         self.image_viewer.set_image(pixmap)
         self.update_filename_label()
         self.image_viewer.setEnabled(True)
-
+        # Load the embedding
+        if self.model_loaded:
+            self.trigger_embbeding.emit(image)
         self.prev_selected_obj_idx = None
 
     def change_img_src(self, index):
@@ -516,6 +571,8 @@ class MainWindow(QMainWindow):
             self.save_annotations()
             # load anno for next
             self.current_idx = index
+            # reset run_model action until embedding calculated
+            self.run_model_action.setEnabled(False)
 
             if (self.current_idx >= self.start_idx) and (
                 self.current_idx < self.end_idx
@@ -578,49 +635,48 @@ class MainWindow(QMainWindow):
         text = self.text_input.text()
         points = self.image_viewer.prompt_star_coords
         boxes = self.image_viewer.prompt_box_coords
-        self.model_thread = ModelThread(
-            self.current_image, text, points, boxes, device="mps"
+        self.model_worker.predict(
+            text, points, boxes if boxes != [] else [None] * len(points)
         )
-        self.model_thread.result_ready.connect(self.on_model_result)
-        self.model_thread.start()
         # TODO: Change this to something like thread.join() or emitting a signal from thread
 
     def on_model_result(self, polygons):
         """Display model results and populate the object list."""
-        self.image_viewer.display_pred_polys(polygons)
-        for i in range(len(polygons)):
-            custom_widget = CustomListItemWidget(self.color_dict.keys())
-            item = QListWidgetItem()
-            item.setSizeHint(custom_widget.sizeHint())
-
-            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsEditable)
-            self.object_list.addItem(item)
-            self.object_list.setItemWidget(item, custom_widget)
+        masks: list[MaskData] = self.image_viewer.add_prediction_polys(polygons)
+        for mask in masks:
+            self.add_to_object_list(mask)
         self.image_viewer.clear_prompts()
 
-    def change_object_label(self, poly_idx, label_text):
-        self.image_viewer.changePolygonLabel(poly_idx, label_text)
-        item = self.object_list.item(poly_idx)
+    def delete_object(self, item: QListWidgetItem, mask_id: int):
+        self.image_viewer.removePolygon(item.data(Qt.ItemDataRole.UserRole))
+        self.object_list.takeItem(self.object_list.row(item))
+
+    def change_object_label(self, item: QListWidgetItem, label_text):
+        self.image_viewer.changePolygonLabel(
+            item.data(Qt.ItemDataRole.UserRole), label_text
+        )
+        # item = self.object_list.item(poly_idx)
         if item:
-            item.setData(1, label_text)
+            item.setData(Qt.ItemDataRole.UserRole + 1, label_text)
             item.setBackground(QColor(*self.color_dict[label_text] + (50,)))
 
     def add_to_object_list(self, shape_dict: MaskData):
         custom_widget = CustomListItemWidget(list(self.color_dict.keys()))
 
         custom_widget.setupFields(shape_dict.id, shape_dict.label, "Polygon")
-        item = QListWidgetItem()
-        item.setData(0, shape_dict.id)
-        item.setData(1, shape_dict.label)
+        item = QListWidgetItem("")
+        item.setData(Qt.ItemDataRole.UserRole, shape_dict.id)
+        item.setData(Qt.ItemDataRole.UserRole + 1, shape_dict.label)
         item.setSizeHint(custom_widget.sizeHint())
 
         # item.setFlags(item.flags() | Qt.ItemFlag.ItemIsEditable)
         item.setBackground(QColor(*self.color_dict[shape_dict.label] + (50,)))
         self.object_list.addItem(item)
+        custom_widget.deleted.connect(partial(self.delete_object, item))
         self.object_list.setItemWidget(item, custom_widget)
 
         custom_widget.label_combo_box.currentTextChanged.connect(
-            partial(self.change_object_label, self.object_list.count() - 1)
+            partial(self.change_object_label, item)
         )
 
     def on_object_selected(self, index):
@@ -629,11 +685,17 @@ class MainWindow(QMainWindow):
         # Obtain their shape.id from a constructed dict
         if index == -1:
             return
-        if self.prev_selected_obj_idx is not None:
-            self.image_viewer.unhighlight_polygon(self.prev_selected_obj_idx)
-        self.image_viewer.highlight_polygon(index)
-        self.object_list.item(index).setForeground(QColor("Blue"))
-        self.prev_selected_obj_idx = index
+        item = self.object_list.item(index)
+        if item:
+            if self.prev_selected_obj_idx is not None:
+                prev_item = self.object_list.item(self.prev_selected_obj_idx)
+                if prev_item:
+                    self.image_viewer.unhighlight_polygon(
+                        prev_item.data(Qt.ItemDataRole.UserRole)
+                    )
+            self.image_viewer.highlight_polygon(item.data(Qt.ItemDataRole.UserRole))
+            item.setForeground(QColor("Blue"))
+            self.prev_selected_obj_idx = index
 
     def control_selected(self, item: QListWidgetItem):
         """Update the ImageViewer's control based on list selection."""
@@ -662,12 +724,16 @@ class MainWindow(QMainWindow):
         objects = []
         image_url = self.urls[self.current_idx]
         for i in range(self.object_list.count()):
+            logger.debug(
+                f"Number of objects in object_list: {self.object_list.count()}"
+            )
             row = self.object_list.item(i)
-            id = row.data(0)
-            label = row.data(1)
-            polygon = self.image_viewer.polygon_items[i].polygon()
-            polygon_points = [[p.x(), p.y()] for p in polygon]
-            objects.append({"id": id, "label": label, "polygon": polygon_points})
+            if row:
+                id = row.data(Qt.ItemDataRole.UserRole)
+                label = row.data(Qt.ItemDataRole.UserRole + 1)
+                polygon = self.image_viewer.id_to_poly[id].polygon()
+                polygon_points = [[p.x(), p.y()] for p in polygon]
+                objects.append({"id": id, "label": label, "polygon": polygon_points})
         self.annotations[image_url] = {"objects": objects}
         self.current_idx += 1
 
@@ -678,7 +744,6 @@ class MainWindow(QMainWindow):
                 MaskData(
                     mask_id=obj["id"],
                     points=obj["polygon"],
-                    lines=[],
                     label=obj["label"],
                 )
                 for obj in anno["objects"]

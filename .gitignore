@@ -19,3 +19,11 @@ venv
 
 # environment vars
 .env
+
+# MY todo
+.TODO
+
+# compile_commands.json clangd
+compile_commands.json
+
+.cache

@@ -9,13 +9,18 @@
 
 
 from PyQt6 import QtCore, QtGui, QtWidgets
-from PyQt6.QtGui import QColor, QPalette
+from PyQt6.QtGui import QColor, QPalette, QAction, QCursor
+
+from PyQt6.QtCore import pyqtSignal, QPoint
 
 
 class CustomListItemWidget(QtWidgets.QWidget):
-    def __init__(self, labels: list = [], parent=None):
+    deleted = pyqtSignal(int)
+
+    def __init__(self, classes: list = [], parent=None):
         super(CustomListItemWidget, self).__init__(parent)
-        self.labels = labels
+        self.classes = classes
+        # self.mask_id = mask_id
         # self.setAutoFillBackground(True)
         # self.setStyleSheet("background-color: lightblue; border: 1px solid black;")
         self.setupUi()
@@ -50,7 +55,7 @@ class CustomListItemWidget(QtWidgets.QWidget):
 
         self.label_combo_box = QtWidgets.QComboBox(self)
         self.label_combo_box.setObjectName("label_combo_box")
-        for label in self.labels:
+        for label in self.classes:
             self.label_combo_box.addItem(label)
         self.label_combo_box.setSizePolicy(
             QtWidgets.QSizePolicy.Policy.Expanding,  # This is the key change
@@ -68,12 +73,19 @@ class CustomListItemWidget(QtWidgets.QWidget):
         self.pin_button.setText("📌")
         self.horizontalLayout.addWidget(self.pin_button)
 
+        self.object_menu_button = QtWidgets.QToolButton(self)
+        self.object_menu_button.setObjectName("menu_button")
+        self.object_menu_button.setText("⋮")
+        self.object_menu_button.setStyleSheet("border:none;")
+        self.object_menu_button.clicked.connect(self.show_options)
+        self.horizontalLayout.addWidget(self.object_menu_button)
         # Setting stretch factor for the widgets
         self.horizontalLayout.setStretch(0, 20)  # Labels get 20%
         self.horizontalLayout.setStretch(1, 5)  # Stretch gets 5%
-        self.horizontalLayout.setStretch(2, 60)  # Combo box gets 60%
+        self.horizontalLayout.setStretch(2, 45)  # Combo box gets 60%
         self.horizontalLayout.setStretch(3, 8)  # Lock button gets 7.5%
         self.horizontalLayout.setStretch(4, 7)  # Pin button gets 7.5%
+        self.horizontalLayout.setStretch(5, 5)  # Menu button gets 5%
 
     def setupFields(self, mask_id: int = 0, label: str = "RTU", shape_type="Polygon"):
         self.object_label.setText(f"Object {mask_id}")
@@ -81,13 +93,13 @@ class CustomListItemWidget(QtWidgets.QWidget):
 
         self.label_combo_box.setCurrentText(label)
 
-
-if __name__ == "__main__":
-    import sys
-
-    app = QtWidgets.QApplication(sys.argv)
-    object_list_item = CustomListItemWidget()
-    # ui = Ui_CustomListItemWidget()
-    # ui.setupUi(object_list_item)
-    object_list_item.show()
-    sys.exit(app.exec())
+    def show_options(self):
+        menubar = QtWidgets.QMenuBar(self)
+        menu = menubar.addMenu("")
+        if menu:
+            delete_action = QAction("delete")
+            menu.addAction(delete_action)
+            menu.triggered.connect(lambda _: self.deleted.emit(1))
+            mouse_pos = self.mapFromGlobal(QPoint(self.cursor().pos()))
+            # menu.move(mouse_pos - QPoint(0, menu.height() + 5))  # 5px above mouse
+            menu.exec(QCursor().pos())  # Show dropdown immediately
