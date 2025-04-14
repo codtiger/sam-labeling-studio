@@ -4,10 +4,12 @@ from typing import Optional
 import os
 from dataclasses import dataclass
 
-from PyQt6.QtGui import QImage, QColor, QStyleHints, QIcon
+from PyQt6.QtGui import QImage, QColor, QStyleHints, QIcon, QPixmap, QPainter
 from PyQt6.QtCore import QRectF, Qt, QSize, QRect, QPoint
 from PIL import Image, ImageQt
 from PyQt6.QtWidgets import QStyledItemDelegate, QStyle
+
+from PyQt6.QtSvg import QSvgRenderer
 
 import numpy as np
 
@@ -140,6 +142,18 @@ def read_colors(text_file):
                 int(line_cols[2]),
             )
     return color_dict
+
+
+def svg_to_icon(svg_string, size):
+    """Convert an SVG string to a QIcon."""
+    renderer = QSvgRenderer(bytearray(svg_string.encode("utf-8")))
+    pixmap = QPixmap(size, size)
+    pixmap.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    renderer.render(painter)
+    painter.end()
+    return QIcon(pixmap)
 
 
 def is_inside_rect(rect: QRectF, point: QPoint):

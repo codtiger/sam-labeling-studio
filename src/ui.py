@@ -12,7 +12,6 @@ from PyQt6.QtWidgets import (
     QListWidgetItem,
     QLineEdit,
     QTabWidget,
-    QToolBar,
     QVBoxLayout,
     QWidget,
     QFileDialog,
@@ -37,23 +36,22 @@ from PyQt6.QtGui import (
     QKeySequence,
     QPixmap,
     QIcon,
-    QPainter,
     QAction,
     QColor,
     QKeyEvent,
     QBrush,
 )
-from PyQt6.QtSvg import QSvgRenderer
 
 from .image_viewer import ImageViewer
 from .list_item_widget import CustomListItemWidget
-from .threads import ImageLoaderThread, ImageLocalLoaderThread
+from .threads import AsyncRemoteImageLoader, LocalImageLoader
 from .sam_thread import ModelWorker
 from .utils import (
     pil_to_qimage,
     read_colors,
     gray_out_icon,
     get_logger,
+    svg_to_icon,
     ShapeDelegate,
     DataSource,
     ControlItem,
@@ -65,7 +63,8 @@ logger = get_logger("Main UI")
 
 class MainWindow(QMainWindow):
 
-    MEMORY_LIMIT = 30
+    MEMORY_LIMIT = 200
+    MAX_PARALLEL_REQUESTS = 10
 
     trigger_embbeding = pyqtSignal(Image.Image)
     trigger_prediction = pyqtSignal(str, list, list)
@@ -168,7 +167,7 @@ class MainWindow(QMainWindow):
 
             </svg>
         """
-        mouse_icon = self.svg_to_icon(mouse_svg, 48)
+        mouse_icon = svg_to_icon(mouse_svg, 48)
         mouse_item = QListWidgetItem(mouse_icon, "")
         mouse_item.setToolTip("Cursor")
         mouse_item.setData(0, ControlItem.NORMAL)
@@ -181,7 +180,7 @@ class MainWindow(QMainWindow):
             <rect x="8" y="8" width="24" height="24" fill="none" stroke="white" stroke-width="2"/>
         </svg>
         """
-        box_icon = self.svg_to_icon(box_svg, 48)
+        box_icon = svg_to_icon(box_svg, 48)
         box_item = QListWidgetItem(box_icon, "")
         box_item.setToolTip("Box")
         box_item.setData(0, ControlItem.BOX)
@@ -195,7 +194,7 @@ class MainWindow(QMainWindow):
             <polygon points="24,4 44,18 34,40 14,40 4,18" fill="none" stroke="white" stroke-width="4"/>
         </svg>
         """
-        polygon_icon = self.svg_to_icon(polygon_svg, 48)
+        polygon_icon = svg_to_icon(polygon_svg, 48)
         polygon_item = QListWidgetItem(polygon_icon, "")
         polygon_item.setToolTip("Polygon")
         polygon_item.setData(0, ControlItem.POLYGON)
@@ -217,7 +216,7 @@ class MainWindow(QMainWindow):
             <line x1="15" y1="15" x2="22" y2="22" stroke="white" stroke-width="2"/>
         </svg>
         """
-        zoom_in_icon = self.svg_to_icon(zoom_in_svg, 48)
+        zoom_in_icon = svg_to_icon(zoom_in_svg, 48)
         zoom_in_item = QListWidgetItem(zoom_in_icon, "")
         zoom_in_item.setToolTip("Zoom In")
         zoom_in_item.setData(0, ControlItem.ZOOM_IN)
@@ -238,7 +237,7 @@ class MainWindow(QMainWindow):
             <line x1="15" y1="15" x2="22" y2="22" stroke="white" stroke-width="2"/>
         </svg>
         """
-        zoom_out_icon = self.svg_to_icon(zoom_out_svg, 48)
+        zoom_out_icon = svg_to_icon(zoom_out_svg, 48)
         zoom_out_item = QListWidgetItem(zoom_out_icon, "")
         zoom_out_item.setToolTip("Zoom Out")
         zoom_out_item.setData(0, ControlItem.ZOOM_OUT)
@@ -256,7 +255,7 @@ class MainWindow(QMainWindow):
             </svg>
 
         """
-        roi_icon = self.svg_to_icon(roi_region_svg, 48)
+        roi_icon = svg_to_icon(roi_region_svg, 48)
         roi_item = QListWidgetItem(roi_icon, "")
         roi_item.setToolTip("Select ROI")
         roi_item.setData(0, ControlItem.ROI)
@@ -270,7 +269,7 @@ class MainWindow(QMainWindow):
              fill="none" stroke="white" stroke-width="5"/>
     </svg>
         """
-        star_icon = self.svg_to_icon(star_svg, 48)
+        star_icon = svg_to_icon(star_svg, 48)
         star_item = QListWidgetItem(star_icon, "")
         star_item.setToolTip("Point")
         star_item.setData(0, ControlItem.STAR)
@@ -338,7 +337,7 @@ class MainWindow(QMainWindow):
         self.load_url_action = QAction("Load URL List", self)
         self.load_images_action = QAction("Load Images", self)
         self.load_url_action.triggered.connect(self.load_url_list)
-        self.load_images_action.triggered.connect(self.load_images)
+        self.load_images_action.triggered.connect(self.show_filepicker_dialog)
         self.file_menu.addAction(self.load_url_action)
         self.file_menu.addAction(self.load_images_action)
 
@@ -366,11 +365,14 @@ class MainWindow(QMainWindow):
             self.toolbar.addAction(self.undo_action)
             self.toolbar.addAction(self.redo_action)
 
+        # async loader
+        self.async_remote_loader = None
+        self.loader_thread: Optional[QThread] = None
         # Data storage
         self.prev_selected_obj_idx = None
         self.data_source = DataSource.LOCAL
         self.urls = []  # List of image URLs
-        self.images = [[]] * MainWindow.MEMORY_LIMIT  # List of PIL.Image objects
+        self.images = [None] * MainWindow.MEMORY_LIMIT  # List of PIL.Image objects
         self.start_idx, self.end_idx = 0, MainWindow.MEMORY_LIMIT
 
         self.current_idx = 0  # Index of the current image
@@ -430,17 +432,6 @@ class MainWindow(QMainWindow):
             except yaml.YAMLError as exc:
                 self.close()
 
-    def svg_to_icon(self, svg_string, size):
-        """Convert an SVG string to a QIcon."""
-        renderer = QSvgRenderer(bytearray(svg_string.encode("utf-8")))
-        pixmap = QPixmap(size, size)
-        pixmap.fill(Qt.GlobalColor.transparent)
-        painter = QPainter(pixmap)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        renderer.render(painter)
-        painter.end()
-        return QIcon(pixmap)
-
     def update_mode(self):
         """Update ImageViewer mode and Run Model button state based on radio selection."""
         if self.model_mode_radio.isChecked():
@@ -492,14 +483,26 @@ class MainWindow(QMainWindow):
             with open(file_name, "r") as f:
                 self.urls = [line.strip() for line in f if line.strip()]
             self.current_idx = 0
+            self.images = [None] * self.MEMORY_LIMIT
+            # if user rushes to select new files or urls, this should be set to None
+            self.current_image = None
+
             self.data_source = DataSource.URL_REQUEST
             if self.urls:
                 self.slider.setMaximum(len(self.urls) - 1)
                 self.slider.setValue(self.current_idx)
                 self.update_filename_label()
-                self.load_image_from_url(self.urls[self.current_idx])
+                if (
+                    self.loader_thread is not None
+                    and self.async_remote_loader is not None
+                ) and self.loader_thread.isRunning():
+                    self.async_remote_loader.stop()
+                    self.loader_thread.quit()
+                    self.loader_thread.wait()
+                    del self.async_remote_loader
+                self.load_image_from_url(self.urls[self.start_idx : self.end_idx])
 
-    def load_images(self):
+    def show_filepicker_dialog(self):
         self.urls, _ = QFileDialog.getOpenFileNames(
             self,
             "Select Images",
@@ -507,6 +510,9 @@ class MainWindow(QMainWindow):
             "Images (*.png *.jpg)",
             options=QFileDialog.Option.DontUseNativeDialog,
         )
+        self.images = [None] * self.MEMORY_LIMIT
+        # if user rushes to select new files or urls, this should be set to None
+        self.current_image = None
         if len(self.urls) != 0:
             self.last_directory = Path(self.urls[0]).parent
             self.current_idx = 0
@@ -537,14 +543,34 @@ class MainWindow(QMainWindow):
             lambda _: self.image_viewer.set_last_label(combo.currentText())
         )
 
-    def load_image_from_url(self, url):
+    def load_image_from_url(self, urls):
         """Start a thread to load an image from a URL."""
-        self.loader_thread = ImageLoaderThread(url)
-        self.loader_thread.image_loaded.connect(self.load_viewer)
+        self.async_remote_loader = AsyncRemoteImageLoader(
+            urls, self.MAX_PARALLEL_REQUESTS, self.images
+        )
+        self.loader_thread = QThread()
+        self.async_remote_loader.moveToThread(self.loader_thread)
+        self.async_remote_loader.image_loaded.connect(self.on_image_loaded)
+        self.async_remote_loader.error_occurred.connect(self.on_image_load_error)
+        self.loader_thread.started.connect(self.async_remote_loader.run)
+        self.loader_thread.finished.connect(self.loader_thread.deleteLater)
+
         self.loader_thread.start()
 
+    def stop_asyc_loader(self):
+        if self.async_remote_loader:
+            self.async_remote_loader.stop()
+
+    def on_image_loaded(self, url, image):
+        # self.images.append(image)
+        if self.current_image is None:
+            self.load_viewer(image)
+
+    def on_image_load_error(self, url, error):
+        logger.error(f"Failed to load image: {url} ; Error: {error}")
+
     def load_images_local(self, paths):
-        self.local_thread = ImageLocalLoaderThread(paths, self.images)
+        self.local_thread = LocalImageLoader(paths, self.images)
         self.local_thread.image_loaded.connect(self.load_viewer)
         self.local_thread.start()
 
@@ -588,7 +614,7 @@ class MainWindow(QMainWindow):
                 if self.data_source == DataSource.LOCAL:
                     self.load_images_local(self.urls[self.start_idx : self.end_idx])
                 elif self.data_source == DataSource.URL_REQUEST:
-                    self.load_image_from_url(self.urls[self.current_idx])
+                    self.load_image_from_url(self.urls[self.start_idx : self.end_idx])
             elif self.current_idx < self.start_idx:
                 # for now do above
                 # TODO: change to loading from [current_idx, end_idx - (start_idx - current_idx)]
@@ -599,7 +625,7 @@ class MainWindow(QMainWindow):
                 if self.data_source == DataSource.LOCAL:
                     self.load_images_local(self.urls[self.start_idx : self.end_idx])
                 elif self.data_source == DataSource.URL_REQUEST:
-                    self.load_image_from_url(self.urls[self.current_idx])
+                    self.load_image_from_url(self.urls[self.start_idx : self.end_idx])
             self.load_annotations(self.current_idx)
             return 0
         return 1

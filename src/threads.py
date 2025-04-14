@@ -1,29 +1,86 @@
-from PyQt6.QtCore import QThread, pyqtSignal, QWaitCondition, QMutex
+from PyQt6.QtCore import QObject, QThread, pyqtSignal, QWaitCondition, QMutex
 import requests
-from queue import Queue
 from PIL import Image
 from io import BytesIO
 
+import aiohttp
+import asyncio
 
-class ImageLoaderThread(QThread):
-    """Thread to download an image from a URL."""
+from src.utils import get_logger
 
-    image_loaded = pyqtSignal(Image.Image)
 
-    def __init__(self, url):
+class AsyncRemoteImageLoader(QObject):
+    """Thread to load remote images asynchronously"""
+
+    image_loaded = pyqtSignal(str, Image.Image)
+    error_occurred = pyqtSignal(str, str)
+
+    def __init__(self, urls, max_parralel_reqs: int = 10, images: list = []):
         super().__init__()
-        self.url = url
+        self.urls = urls
+        self.loop = None
+        self.logger = get_logger(AsyncRemoteImageLoader.__name__)
+        self.images = images
+        self.max_parralel_reqs = max_parralel_reqs
+        self.semaphore = asyncio.Semaphore(self.max_parralel_reqs)
+        self.running = True
+
+    async def fetch_one_image(self, session: aiohttp.ClientSession, url, index):
+        """Fetch a single image asynchronously"""
+        if not self.running:
+            return
+        try:
+            async with session.get(url, timeout=10) as response:
+                response.raise_for_status()
+                image_bytes = await response.read()
+                image = Image.open(BytesIO(image_bytes))
+                self.images[index] = image
+                if index == 0:
+                    self.image_loaded.emit(url, image)
+
+        except Exception as e:
+            self.error_occurred.emit(url, str(e))
+
+    async def load_images(self):
+        if not self.urls:
+            return
+        first_url = self.urls[0]
+        async with aiohttp.ClientSession() as session:
+            await self.fetch_one_image(session, first_url, 0)
+
+            tasks = [
+                self.fetch_with_semaphore(session, self.urls[idx], idx)
+                for idx in range(1, len(self.urls))
+            ]
+            await asyncio.gather(*tasks)
+
+    async def fetch_with_semaphore(self, session, url, index):
+        """Fetch an image with a semaphore to limit parallel requests."""
+        async with self.semaphore:
+            await self.fetch_one_image(session, url, index)
+
+    def stop(self):
+        """Stop the loader"""
+        self.running = False
+        if self.loop and self.loop.is_running():
+            for task in asyncio.all_tasks(self.loop):
+                task.cancel()
+            self.loop.call_soon_threadsafe(self.loop.stop)
 
     def run(self):
+        self.loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(self.loop)
         try:
-            response = requests.get(self.url, timeout=10)
-            image = Image.open(BytesIO(response.content))
-            self.image_loaded.emit(image)
-        except Exception as e:
-            print(f"Error loading image from {self.url}: {e}")
+            self.loop.run_until_complete(self.load_images())
+        except asyncio.CancelledError as e:
+            self.logger.warning(f"Cancelled {str(e)}")  # Handle cancellation gracefully
+        except RuntimeError as e:
+            self.logger.warning(f"Runtime {str(e)}")  # Handle cancellation gracefully
+        finally:
+            self.loop.close()
 
 
-class ImageLocalLoaderThread(QThread):
+class LocalImageLoader(QThread):
     """Thread to open images locally in batches"""
 
     image_loaded = pyqtSignal(Image.Image)
@@ -42,6 +99,7 @@ class ImageLocalLoaderThread(QThread):
         self.image_loaded.emit(self.image_list[0])
         self.mutex.lock()
         for idx in range(1, len(self.paths)):
+
             self.image_list[idx] = Image.open(self.paths[idx], "r")
         # self.condition.wait(self.mutex)
         self.mutex.unlock()

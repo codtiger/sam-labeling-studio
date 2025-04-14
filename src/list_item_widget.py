@@ -9,13 +9,16 @@
 
 
 from PyQt6 import QtCore, QtGui, QtWidgets
-from PyQt6.QtGui import QColor, QPalette, QAction, QCursor
+from PyQt6.QtGui import QColor, QPalette, QAction, QCursor, QIcon
 
 from PyQt6.QtCore import pyqtSignal, QPoint
 
 
 class CustomListItemWidget(QtWidgets.QWidget):
     deleted = pyqtSignal(int)
+
+    eye_on_icon = QIcon("assets/eye-on.svg")
+    eye_off_icon = QIcon("assets/eye-off.svg")
 
     def __init__(self, classes: list = [], parent=None):
         super(CustomListItemWidget, self).__init__(parent)
@@ -73,6 +76,13 @@ class CustomListItemWidget(QtWidgets.QWidget):
         self.pin_button.setText("📌")
         self.horizontalLayout.addWidget(self.pin_button)
 
+        self.visibility_button = QtWidgets.QToolButton(self)
+        self.visibility_button.setObjectName("visibility_button")
+        self.visibility_button.setIcon(self.eye_on_icon)
+        self.visibility_button.clicked.connect(self.toggle_visibility)
+        self.visibility_toggle = False
+        self.horizontalLayout.addWidget(self.visibility_button)
+
         self.object_menu_button = QtWidgets.QToolButton(self)
         self.object_menu_button.setObjectName("menu_button")
         self.object_menu_button.setText("⋮")
@@ -83,9 +93,10 @@ class CustomListItemWidget(QtWidgets.QWidget):
         self.horizontalLayout.setStretch(0, 20)  # Labels get 20%
         self.horizontalLayout.setStretch(1, 5)  # Stretch gets 5%
         self.horizontalLayout.setStretch(2, 45)  # Combo box gets 60%
-        self.horizontalLayout.setStretch(3, 8)  # Lock button gets 7.5%
-        self.horizontalLayout.setStretch(4, 7)  # Pin button gets 7.5%
-        self.horizontalLayout.setStretch(5, 5)  # Menu button gets 5%
+        self.horizontalLayout.setStretch(3, 3)  # Lock button gets 7.5%
+        self.horizontalLayout.setStretch(4, 3)  # Pin button gets 7.5%
+        self.horizontalLayout.setStretch(5, 3)
+        self.horizontalLayout.setStretch(6, 3)  # Menu button gets 5%
 
     def setupFields(self, mask_id: int = 0, label: str = "RTU", shape_type="Polygon"):
         self.object_label.setText(f"Object {mask_id}")
@@ -103,3 +114,11 @@ class CustomListItemWidget(QtWidgets.QWidget):
             mouse_pos = self.mapFromGlobal(QPoint(self.cursor().pos()))
             # menu.move(mouse_pos - QPoint(0, menu.height() + 5))  # 5px above mouse
             menu.exec(QCursor().pos())  # Show dropdown immediately
+
+    def toggle_visibility(self):
+        if not self.visibility_toggle:
+            self.visibility_button.setIcon(self.eye_off_icon)
+            self.visibility_toggle = True
+        else:
+            self.visibility_button.setIcon(self.eye_on_icon)
+            self.visibility_toggle = False

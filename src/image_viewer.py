@@ -137,7 +137,10 @@ class ImageViewer(QGraphicsView):
         # self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
 
     def set_last_label(self, label):
-        self.__last_label__ = label
+        if label == "":
+            self.__last_label__ = self.color_dict.keys[0]
+        else:
+            self.__last_label__ = label
 
     def set_mode(self, mode):
         """Set the current mode: 'model' or 'manual'."""
@@ -146,6 +149,7 @@ class ImageViewer(QGraphicsView):
             self.image_item.setOpacity(1.0)
         elif self.mode == "model" and self.image_item:
             self.image_item.setOpacity(0.4)
+        self.control_change.emit(ControlItem.NORMAL)
         self.clear_temp()  # Clear temporary annotations when switching modes
 
     def clear_temp(self):
@@ -348,7 +352,11 @@ class ImageViewer(QGraphicsView):
     def mousePressEvent(self, event):
         """Handle mouse press for point or box annotation."""
         pos = self.mapToScene(event.pos())
-        if event.button() == Qt.MouseButton.LeftButton and self.mode == "manual":
+        if (
+            event.button() == Qt.MouseButton.LeftButton
+            and self.mode == "manual"
+            and is_inside_rect(self.image_scene.sceneRect(), pos)
+        ):
             # "NORMAL" mode(like vim). No shape selected.
             if self.current_control == ControlItem.NORMAL:
                 item = self.image_scene.itemAt(pos, self.transform())
@@ -389,7 +397,9 @@ class ImageViewer(QGraphicsView):
                 self.rubber_band.show()
 
         elif self.mode == "model":
-            if event.button() == Qt.MouseButton.LeftButton:
+            if event.button() == Qt.MouseButton.LeftButton and is_inside_rect(
+                self.image_scene.sceneRect(), pos
+            ):
                 if self.prompt_mode == ModelPrompts.POINT:
                     self.prompt_star_coords[-1].append((pos.x(), pos.y()))
                     # Draw a star at that location
@@ -478,6 +488,14 @@ class ImageViewer(QGraphicsView):
                 if isinstance(item, QGraphicsPolygonItem):
                     mask_id, label = item.data(0), item.data(1)
                     item.setBrush(QColor(*self.color_dict[label] + (50,)))
+                    # for vertex in item.data(2):
+                    #     vertex.setBrush(
+                    #         QBrush(
+                    #             Qt.GlobalColor.white,
+                    #             style=Qt.BrushStyle.DiagCrossPattern,
+                    #         )
+                    #     )
+
                     self.shaded_poly = item
                 elif self.shaded_poly is not None:
                     self.shaded_poly.setBrush(Qt.GlobalColor.transparent)
