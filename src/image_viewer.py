@@ -267,7 +267,7 @@ class ImageViewer(QGraphicsView):
                     self.image_scene.addItem(vertex_item)
                 polygon_item.setData(2, vertices)
 
-    def add_prediction_polys(self, mask_arr: list[np.ndarray]):
+    def add_prediction_polys(self, mask_arr: list[list]):
         """Display polygons returned by the model with editable vertices.
         IMPORTANT: Need to be assigned mask ids by the image viewer"""
 

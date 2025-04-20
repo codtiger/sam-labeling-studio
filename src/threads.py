@@ -12,7 +12,7 @@ from src.utils import get_logger
 class AsyncRemoteImageLoader(QObject):
     """Thread to load remote images asynchronously"""
 
-    image_loaded = pyqtSignal(str, Image.Image)
+    image_loaded = pyqtSignal(str, bytes)
     error_occurred = pyqtSignal(str, str)
 
     def __init__(self, urls, max_parralel_reqs: int = 10, images: list = []):
@@ -33,10 +33,10 @@ class AsyncRemoteImageLoader(QObject):
             async with session.get(url, timeout=10) as response:
                 response.raise_for_status()
                 image_bytes = await response.read()
-                image = Image.open(BytesIO(image_bytes))
-                self.images[index] = image
+                # image = Image.open(BytesIO(image_bytes))
+                self.images[index] = image_bytes
                 if index == 0:
-                    self.image_loaded.emit(url, image)
+                    self.image_loaded.emit(url, image_bytes)
 
         except Exception as e:
             self.error_occurred.emit(url, str(e))
@@ -83,7 +83,7 @@ class AsyncRemoteImageLoader(QObject):
 class LocalImageLoader(QThread):
     """Thread to open images locally in batches"""
 
-    image_loaded = pyqtSignal(Image.Image)
+    image_loaded = pyqtSignal(bytes)
 
     def __init__(self, image_paths: list, image_list: list):
         # self.condition = QWaitCondition()
@@ -95,12 +95,14 @@ class LocalImageLoader(QThread):
         self.image_list = image_list
 
     def run(self):
-        self.image_list[0] = Image.open(self.paths[0], "r")
+        with open(self.paths[0], "rb") as f:
+            self.image_list[0] = f.read()
         self.image_loaded.emit(self.image_list[0])
         self.mutex.lock()
         for idx in range(1, len(self.paths)):
 
-            self.image_list[idx] = Image.open(self.paths[idx], "r")
+            with open(self.paths[idx], "rb") as f:
+                self.image_list[idx] = Image.open(f.read(), "r")
         # self.condition.wait(self.mutex)
         self.mutex.unlock()
 

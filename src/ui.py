@@ -1,9 +1,10 @@
 from typing import Optional, Union
 from functools import partial
 from pathlib import Path
-from io import BytesIO
+import io
 import os
 import yaml
+import requests
 
 from PyQt6.QtWidgets import (
     QMainWindow,
@@ -45,7 +46,7 @@ from PyQt6.QtGui import (
 from .image_viewer import ImageViewer
 from .list_item_widget import CustomListItemWidget
 from .threads import AsyncRemoteImageLoader, LocalImageLoader
-from .sam_thread import ModelWorker
+from .sam_thread import RequestWorker
 from .utils import (
     pil_to_qimage,
     read_colors,
@@ -66,8 +67,10 @@ class MainWindow(QMainWindow):
     MEMORY_LIMIT = 200
     MAX_PARALLEL_REQUESTS = 10
 
-    trigger_embbeding = pyqtSignal(Image.Image)
-    trigger_prediction = pyqtSignal(str, list, list)
+    trigger_embbeding = pyqtSignal(bytes)
+    trigger_prediction = pyqtSignal(
+        str, str, list, list
+    )  # image_id, text, points, boxes
 
     def __init__(self):
         super().__init__()
@@ -347,7 +350,7 @@ class MainWindow(QMainWindow):
             self.toolbar.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
             self.run_model_action = QAction("Run Model", self)
             self.run_model_action.setIcon(QIcon("assets/neural_net.svg"))
-            self.run_model_action.triggered.connect(self.run_model)
+            self.run_model_action.triggered.connect(self.run_prediction)
             self.toolbar.addAction(self.run_model_action)
 
             self.undo_action = QAction("Undo", self)
@@ -386,40 +389,31 @@ class MainWindow(QMainWindow):
         self.image_viewer.control_change.connect(self.set_control)
 
         # Initiate model
+        self.request_url = "http://0.0.0.0:8000/"
         self.model_loaded, self.is_embedded = False, False
-        self.ckpt_path = "weights/sam2.1_hiera_large.pt"
-        self.model_cfg = "configs/sam2.1/sam2.1_hiera_l.yaml"
-        self.model_thread = None
+        self.embed_id: str
+        #     self.model_thread = None
         self.__init_model_thread__()
 
     def __init_model_thread__(self):
         self.model_thread = QThread()
-        self.model_worker = ModelWorker(
-            device="mps", ckpt_path=self.ckpt_path, cfg_path=self.model_cfg
-        )
+        self.model_worker = RequestWorker(self.request_url)
         self.model_worker.moveToThread(self.model_thread)
-        self.model_thread.started.connect(self.model_worker.load_model)
 
-        self.model_worker.model_ready.connect(self.on_model_ready)
         self.model_worker.image_embedded.connect(self.on_image_embedded)
-        self.model_worker.prediction_done.connect(self.on_model_result)
+        self.model_worker.prediction_ready.connect(self.on_model_result)
 
-        self.trigger_embbeding.connect(self.model_worker.set_image)
+        self.trigger_embbeding.connect(self.model_worker.post_image)
         self.trigger_prediction.connect(self.model_worker.predict)
 
-        self.model_thread.start()
-
-    # def __calc_embedding__(self, image):
-    #     embedding_worker = EmbeddingWorker(self.model, image)
-    #     embedding_worker.signals.finished.connect(self.store_predictor)
-    #     if self.thread_pool:
-    #         self.thread_pool.start(embedding_worker)
+        # self.model_thread.start()
 
     def on_model_ready(self):
         logger.warning("MODEL LOADED")
         self.model_loaded = True
 
-    def on_image_embedded(self):
+    def on_image_embedded(self, uuid: str):
+        self.embed_id = uuid
         self.run_model_action.setEnabled(True)
         self.is_embedded = True
 
@@ -574,11 +568,11 @@ class MainWindow(QMainWindow):
         self.local_thread.image_loaded.connect(self.load_viewer)
         self.local_thread.start()
 
-    def load_viewer(self, image: Image.Image):
+    def load_viewer(self, image: bytes):
         """Handle the loaded image by displaying it."""
         self.image_viewer.setEnabled(False)
-        self.current_image = image
-        qimage = pil_to_qimage(image)
+        self.current_image = Image.open(io.BytesIO(image))
+        qimage = pil_to_qimage(self.current_image)
         pixmap = QPixmap.fromImage(qimage)
         self.image_viewer.clear()
         self.object_list.clearSelection()
@@ -587,8 +581,10 @@ class MainWindow(QMainWindow):
         self.update_filename_label()
         self.image_viewer.setEnabled(True)
         # Load the embedding
-        if self.model_loaded:
-            self.trigger_embbeding.emit(image)
+        # if self.model_loaded:
+        #   self.trigger_embbeding.emit(image)
+        self.model_thread.start()
+        self.trigger_embbeding.emit(image)
         self.prev_selected_obj_idx = None
 
     def change_img_src(self, index):
@@ -654,16 +650,14 @@ class MainWindow(QMainWindow):
         else:
             self.filename_label.setText("No file loaded")
 
-    def run_model(self):
+    def run_prediction(self):
         """Run the segmentation model with user inputs."""
         if not self.current_image:
             return
         text = self.text_input.text()
         points = self.image_viewer.prompt_star_coords
         boxes = self.image_viewer.prompt_box_coords
-        self.model_worker.predict(
-            text, points, boxes if boxes != [] else [None] * len(points)
-        )
+        self.trigger_prediction.emit(self.embed_id, text, points, boxes)
         # TODO: Change this to something like thread.join() or emitting a signal from thread
 
     def on_model_result(self, polygons):
@@ -681,7 +675,6 @@ class MainWindow(QMainWindow):
         self.image_viewer.changePolygonLabel(
             item.data(Qt.ItemDataRole.UserRole), label_text
         )
-        # item = self.object_list.item(poly_idx)
         if item:
             item.setData(Qt.ItemDataRole.UserRole + 1, label_text)
             item.setBackground(QColor(*self.color_dict[label_text] + (50,)))
