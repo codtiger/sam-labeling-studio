@@ -44,8 +44,8 @@ class EmbedResponse(BaseModel):
 
 
 class PredictResponse(BaseModel):
-    predictions: List[List[List[int]]] = Field(
-        ..., description="List of predicted polygons/masks."
+    predictions: List[List[List[List[int]]]] = Field(
+        ..., description="List of predicted polygons/masks for each query."
     )
 
 
@@ -58,13 +58,15 @@ async def lifespan(app: FastAPI):
         base_model = build_sam2(CFG_PATH, CKPT_PATH, device=DEVICE)
         app_state["base_model"] = base_model
         # This cache will store predictor instances keyed by image_id
-        app_state["image_predictors"] = {}
+        app_state["image_predictor"] = None
+        app_state["active_image"] = None
         logger.info("Base SAM2 model loaded successfully.")
     except Exception as e:
         logger.error(f"Fatal error loading base model: {e}", exc_info=True)
 
         app_state["base_model"] = None  # Indicate loading failure
-        app_state["image_predictors"] = {}
+        app_state["image_predictor"] = None
+        app_state["active_image"] = None
 
     yield  # Application runs here
 
@@ -110,7 +112,8 @@ async def embed_image(
         image_id = str(uuid.uuid4())
 
         # Store the predictor instance (which now holds the embeddings)
-        app_state["image_predictors"][image_id] = predictor
+        app_state["active_image"] = image_id
+        app_state["image_predictor"] = predictor
 
         return EmbedResponse(image_id=image_id)
 
@@ -138,9 +141,8 @@ async def predict_on_image(
             status_code=503, detail="Model not loaded or failed to load."
         )
 
-    predictor = app_state["image_predictors"].get(image_id)
-
-    if predictor is None:
+    predictor = app_state["image_predictor"]
+    if predictor is None or app_state["active_image"] != image_id:
         raise HTTPException(
             status_code=404,
             detail=f"Image ID '{image_id}' not found or embeddings not created.",
@@ -197,11 +199,16 @@ async def predict_on_image(
                 and len(confids) > 0
             ):
                 # Process the best prediction (highest confidence)
-                best_mask = preds[confids.argmax()]
-                polygon = get_convex_hull(
-                    best_mask
-                )  # Assumes returns List[List[float/int]]
-                all_results.append(polygon.astype(np.int32).tolist())
+                # best_mask = preds[confids.argmax()]
+                preds_filtered = preds[confids >= 0.4]
+                polygons = [
+                    get_convex_hull(mask).astype(np.int32).tolist()
+                    for mask in preds_filtered
+                ]
+                # polygon = get_convex_hull(
+                #   best_mask
+                # )  # Assumes returns List[List[float/int]]
+                all_results.append(polygons)
             else:
                 logger.warning("Prediction returned no valid results for a prompt.")
 

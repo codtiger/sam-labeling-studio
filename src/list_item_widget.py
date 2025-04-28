@@ -16,14 +16,17 @@ from PyQt6.QtCore import pyqtSignal, QPoint
 
 class CustomListItemWidget(QtWidgets.QWidget):
     deleted = pyqtSignal(int)
+    candidate_changed = pyqtSignal(int, int)
+    candidate_selected = pyqtSignal(int, int)
 
     eye_on_icon = QIcon("assets/eye-on.svg")
     eye_off_icon = QIcon("assets/eye-off.svg")
+    delete_icon = QIcon("assets/trash-delete-bin.svg")
 
     def __init__(self, classes: list = [], parent=None):
         super(CustomListItemWidget, self).__init__(parent)
         self.classes = classes
-        # self.mask_id = mask_id
+        self.mask_id = None
         # self.setAutoFillBackground(True)
         # self.setStyleSheet("background-color: lightblue; border: 1px solid black;")
         self.setupUi()
@@ -38,23 +41,37 @@ class CustomListItemWidget(QtWidgets.QWidget):
             QtWidgets.QSizePolicy.Policy.Expanding, QtWidgets.QSizePolicy.Policy.Fixed
         )
 
-        self.horizontalLayout = QtWidgets.QHBoxLayout(self)
-        self.horizontalLayout.setContentsMargins(4, 4, 4, 4)  # Add some margins
-        self.horizontalLayout.setObjectName("horizontalLayout")
-
-        self.verticalLayout = QtWidgets.QVBoxLayout()
+        self.total_candidates = 0
+        self.verticalLayout = QtWidgets.QVBoxLayout(self)
+        self.verticalLayout.setContentsMargins(1, 1, 0, 0)  # Add some margins
         self.verticalLayout.setObjectName("verticalLayout")
+
+        self.horizontalTopLayout = QtWidgets.QHBoxLayout(self)
+        self.horizontalTopLayout.setContentsMargins(4, 4, 4, 4)  # Add some margins
+        self.horizontalBottomLayout = QtWidgets.QHBoxLayout(self)
+        self.horizontalBottomLayout.setContentsMargins(0, 0, 0, 0)  # Add some margins
+        self.horizontalBottomLayout.setSpacing(5)
+        self.horizontalBottomLayout.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+
+        self.horizontalTopLayout.setObjectName("horizontalTopLayout")
+        self.horizontalBottomLayout.setObjectName("horizontalBottomLayout")
+
+        self.descriptionLayout = QtWidgets.QVBoxLayout()
+        self.descriptionLayout.setObjectName("descriptionLayout")
 
         self.object_label = QtWidgets.QLabel(self)
         self.object_label.setObjectName("object_label")
-        self.verticalLayout.addWidget(self.object_label)
+        self.descriptionLayout.addWidget(self.object_label)
 
         self.shape_label = QtWidgets.QLabel(self)
         self.shape_label.setObjectName("shape_label")
-        self.verticalLayout.addWidget(self.shape_label)
+        self.descriptionLayout.addWidget(self.shape_label)
 
-        self.horizontalLayout.addLayout(self.verticalLayout)
-        self.horizontalLayout.addStretch(1)  # Add stretch to push widgets to left
+        self.verticalLayout.addLayout(self.horizontalTopLayout)
+        self.verticalLayout.addLayout(self.horizontalBottomLayout)
+
+        self.horizontalTopLayout.addLayout(self.descriptionLayout)
+        self.horizontalTopLayout.addStretch(1)  # Add stretch to push widgets to left
 
         self.label_combo_box = QtWidgets.QComboBox(self)
         self.label_combo_box.setObjectName("label_combo_box")
@@ -64,56 +81,164 @@ class CustomListItemWidget(QtWidgets.QWidget):
             QtWidgets.QSizePolicy.Policy.Expanding,  # This is the key change
             QtWidgets.QSizePolicy.Policy.Fixed,
         )
-        self.horizontalLayout.addWidget(self.label_combo_box, 3)
+        self.horizontalTopLayout.addWidget(self.label_combo_box, 3)
 
-        self.lock_button = QtWidgets.QToolButton(self)
-        self.lock_button.setObjectName("lock_button")
-        self.lock_button.setText("🔒")
-        self.horizontalLayout.addWidget(self.lock_button)
-
-        self.pin_button = QtWidgets.QToolButton(self)
-        self.pin_button.setObjectName("pin_button")
-        self.pin_button.setText("📌")
-        self.horizontalLayout.addWidget(self.pin_button)
-
-        self.visibility_button = QtWidgets.QToolButton(self)
-        self.visibility_button.setObjectName("visibility_button")
-        self.visibility_button.setIcon(self.eye_on_icon)
-        self.visibility_button.clicked.connect(self.toggle_visibility)
-        self.visibility_toggle = False
-        self.horizontalLayout.addWidget(self.visibility_button)
-
+        # Menu buttons
         self.object_menu_button = QtWidgets.QToolButton(self)
         self.object_menu_button.setObjectName("menu_button")
         self.object_menu_button.setText("⋮")
         self.object_menu_button.setStyleSheet("border:none;")
         self.object_menu_button.clicked.connect(self.show_options)
-        self.horizontalLayout.addWidget(self.object_menu_button)
-        # Setting stretch factor for the widgets
-        self.horizontalLayout.setStretch(0, 20)  # Labels get 20%
-        self.horizontalLayout.setStretch(1, 5)  # Stretch gets 5%
-        self.horizontalLayout.setStretch(2, 45)  # Combo box gets 60%
-        self.horizontalLayout.setStretch(3, 3)  # Lock button gets 7.5%
-        self.horizontalLayout.setStretch(4, 3)  # Pin button gets 7.5%
-        self.horizontalLayout.setStretch(5, 3)
-        self.horizontalLayout.setStretch(6, 3)  # Menu button gets 5%
+        self.horizontalTopLayout.addWidget(self.object_menu_button)
 
-    def setupFields(self, mask_id: int = 0, label: str = "RTU", shape_type="Polygon"):
+        self.lock_button = QtWidgets.QToolButton(self)
+        self.lock_button.setObjectName("lock_button")
+        self.lock_button.setText("🔒")
+        self.lock_button.setStyleSheet("border:none;")
+        self.horizontalBottomLayout.addWidget(self.lock_button)
+
+        self.pin_button = QtWidgets.QToolButton(self)
+        self.pin_button.setObjectName("pin_button")
+        self.pin_button.setText("📌")
+        self.pin_button.setStyleSheet("border:none;")
+        self.horizontalBottomLayout.addWidget(self.pin_button)
+
+        self.visibility_button = QtWidgets.QToolButton(self)
+        self.visibility_button.setObjectName("visibility_button")
+        self.visibility_button.setIcon(self.eye_on_icon)
+        self.visibility_button.clicked.connect(self.toggle_visibility)
+        self.visibility_button.setStyleSheet("border:none;")
+        self.visibility_toggle = False
+        self.horizontalBottomLayout.addWidget(self.visibility_button)
+
+        # Setting stretch factor for the widgets
+        self.horizontalTopLayout.setStretch(0, 20)  # Labels get 20%
+        self.horizontalTopLayout.setStretch(1, 5)  # Stretch gets 5%
+        self.horizontalTopLayout.setStretch(2, 45)  # Combo box gets 60%
+        self.horizontalTopLayout.setStretch(6, 3)  # Menu button gets 5%
+        self.horizontalBottomLayout.setStretch(0, 1)  # Lock button gets 7.5%
+        self.horizontalBottomLayout.setStretch(1, 1)  # Pin button gets 7.5%
+        self.horizontalBottomLayout.setStretch(2, 1)
+
+        self.setContextMenuPolicy(QtCore.Qt.ContextMenuPolicy.CustomContextMenu)
+
+    def setupFields(
+        self,
+        mask_id: int = 0,
+        label: str = "background",
+        shape_type="Polygon",
+        total_candidates=0,
+    ):
+        self.mask_id = mask_id
         self.object_label.setText(f"Object {mask_id}")
         self.shape_label.setText(shape_type)
-
         self.label_combo_box.setCurrentText(label)
+        self.total_candidates = total_candidates
+        self.add_candidates()
+
+    def add_candidates(self):
+        self.current_candidate_index = 0
+        self.add_candidate_section()
+
+    def add_candidate_section(self):
+        self.candidate_layout = QtWidgets.QHBoxLayout()
+        self.candidate_layout.setContentsMargins(2,0,2,0)
+        self.candidate_layout.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+
+        self.checkmark_button = QtWidgets.QPushButton("✔", self)
+        self.checkmark_button.setObjectName("checkmark_button")
+        self.checkmark_button.clicked.connect(self.select_candidate)
+        self.candidate_layout.addWidget(self.checkmark_button)
+
+        self.dots_hbox_layout = QtWidgets.QHBoxLayout()
+        self.dots_hbox_layout.setSpacing(3)
+        self.candidate_layout.addLayout(self.dots_hbox_layout)
+
+        self.add_candidate_dots()
+        # Add arrows and checkmark
+        self.left_arrow_button = QtWidgets.QPushButton("<", self)
+        self.left_arrow_button.setObjectName("left_arrow_button")
+        self.left_arrow_button.clicked.connect(self.previous_candidate)
+        self.candidate_layout.addWidget(self.left_arrow_button)
+
+        self.verticalLayout.addLayout(self.candidate_layout)
+
+        self.right_arrow_button = QtWidgets.QPushButton(">", self)
+        self.right_arrow_button.setObjectName("right_arrow_button")
+        self.right_arrow_button.clicked.connect(self.next_candidate)
+        self.candidate_layout.addWidget(self.right_arrow_button)  
+        self.candidate_layout.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+        self.verticalLayout.addLayout(self.candidate_layout)
+
+        # Hide arrows and checkmark if there are no candidates or only one candidate
+        is_multiple_candidates = self.total_candidates > 1
+        self.left_arrow_button.setVisible(is_multiple_candidates)
+        self.right_arrow_button.setVisible(is_multiple_candidates)
+        self.checkmark_button.setVisible(is_multiple_candidates)
+
+    def remove_candidate_section(self):
+        """Remove the candidate section from the widget."""
+        for i in range(self.dots_hbox_layout.count()):
+            self.dots_hbox_layout.itemAt(i).widget().deleteLater()
+        self.left_arrow_button.deleteLater()
+        self.right_arrow_button.deleteLater()
+        self.checkmark_button.deleteLater()
+        self.dots_hbox_layout.deleteLater()
+        self.candidate_layout.deleteLater()
+
+
+    def add_candidate_dots(self):
+        """Update the dots to reflect the current candidate and total candidates."""
+        for i in range(self.total_candidates):
+            dot = QtWidgets.QLabel("●", self)
+            dot.setStyleSheet(
+                "color: black;" if i == self.current_candidate_index else "color: gray;"
+            )
+            self.dots_hbox_layout.addWidget(dot)
+
+    def next_candidate(self):
+        """Switch to the next candidate."""
+        if self.total_candidates > 1:
+            self.dots_hbox_layout.itemAt(self.current_candidate_index).widget().setStyleSheet(
+                "color: gray;"
+            )
+            self.current_candidate_index = (self.current_candidate_index + 1) % self.total_candidates
+            self.dots_hbox_layout.itemAt(self.current_candidate_index).widget().setStyleSheet(
+                "color: black;"
+            )
+            self.candidate_changed.emit(self.mask_id, self.current_candidate_index)
+
+    def previous_candidate(self):
+        """Switch to the previous candidate."""
+        if self.total_candidates > 1:
+            self.dots_hbox_layout.itemAt(self.current_candidate_index).widget().setStyleSheet(
+                "color: gray;"
+            )
+            self.current_candidate_index = (self.current_candidate_index - 1) % self.total_candidates
+            self.dots_hbox_layout.itemAt(self.current_candidate_index).widget().setStyleSheet(
+                "color: black;"
+            )
+            self.candidate_changed.emit(self.mask_id, self.current_candidate_index)
+
+    def select_candidate(self):
+        """Select the current candidate and remove others."""
+        self.total_candidates = 0
+        self.current_candidate_index = 0
+        self.remove_candidate_section()
+        self.candidate_selected.emit(
+            self.mask_id,
+            self.current_candidate_index,
+        )
 
     def show_options(self):
-        menubar = QtWidgets.QMenuBar(self)
-        menu = menubar.addMenu("")
-        if menu:
-            delete_action = QAction("delete")
-            menu.addAction(delete_action)
-            menu.triggered.connect(lambda _: self.deleted.emit(1))
-            mouse_pos = self.mapFromGlobal(QPoint(self.cursor().pos()))
-            # menu.move(mouse_pos - QPoint(0, menu.height() + 5))  # 5px above mouse
-            menu.exec(QCursor().pos())  # Show dropdown immediately
+        context_menu = QtWidgets.QMenu(self)
+        delete_action = QAction("Delete", self)
+        delete_action.setIcon(self.delete_icon)
+        context_menu.addAction(delete_action)
+        delete_action.triggered.connect(lambda _: self.deleted.emit(1))
+        mouse_pos = self.mapFromGlobal(QPoint(self.cursor().pos()))
+        # menu.move(mouse_pos - QPoint(0, menu.height() + 5))  # 5px above mouse
+        context_menu.exec(QCursor().pos())  # Show dropdown immediately
 
     def toggle_visibility(self):
         if not self.visibility_toggle:

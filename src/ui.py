@@ -1,8 +1,9 @@
-from typing import Optional, Union
+from typing import List, Optional, Union
 from functools import partial
 from pathlib import Path
 import io
 import os
+from PyQt6 import QtWidgets
 import yaml
 import requests
 
@@ -58,6 +59,7 @@ from .utils import (
     ControlItem,
     MaskData,
 )
+from .formats import coco
 
 logger = get_logger("Main UI")
 
@@ -337,12 +339,20 @@ class MainWindow(QMainWindow):
         # Menu bar
         self.menu = self.menuBar()
         self.file_menu = self.menu.addMenu("File")
+        self.edit_menu = self.menu.addMenu("Edit")
         self.load_url_action = QAction("Load URL List", self)
         self.load_images_action = QAction("Load Images", self)
         self.load_url_action.triggered.connect(self.load_url_list)
         self.load_images_action.triggered.connect(self.show_filepicker_dialog)
-        self.file_menu.addAction(self.load_url_action)
-        self.file_menu.addAction(self.load_images_action)
+        if self.file_menu:
+            self.file_menu.addAction(self.load_url_action)
+            self.file_menu.addAction(self.load_images_action)
+            self.export_action = QAction("Export")
+            self.import_action = QAction("Import")
+            self.file_menu.addAction(self.export_action)
+            self.file_menu.addAction(self.import_action)
+            self.export_action.triggered.connect(self.on_export_selected)
+            self.import_action.triggered.connect(self.on_import_selected)
 
         # Toolbar with actions
         self.toolbar = self.addToolBar("Tools")
@@ -379,6 +389,7 @@ class MainWindow(QMainWindow):
         self.start_idx, self.end_idx = 0, MainWindow.MEMORY_LIMIT
 
         self.current_idx = 0  # Index of the current image
+        self.id_to_candids = {}
         self.annotations = {}  # Dictionary to store annotations
         self.current_image = None  # Current PIL image
         # Initial update to set button state
@@ -519,8 +530,31 @@ class MainWindow(QMainWindow):
 
             self.load_images_local(self.urls[self.start_idx : self.end_idx])
 
-    # def update_prompt_mode(self, text):
-    #     self.image_viewer.switch_model_prompt(text)
+    def on_export_selected(self):
+        self.save_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Select Export Location",
+            os.curdir,
+            "(*.zip)",
+            options=QFileDialog.Option.DontUseNativeDialog,
+        )
+        if self.annotations:
+            coco.export_annotations_to_zip(
+                self.annotations, self.color_dict, self.save_path, "Train"
+            )
+
+    def on_import_selected(self):
+        self.zip_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Select Import File",
+            os.curdir,
+            "(*.zip)",
+            options=QFileDialog.Option.DontUseNativeDialog,
+        )
+        self.annotations = coco.import_annotations_from_zip(
+            input_zip_path=self.zip_path, urls=self.urls, dataset_type="Train"
+        )
+        # TODO: draw on the current image
 
     def show_label_combobox(self):
         """Show a QComboBox with labels at the mouse position."""
@@ -660,11 +694,15 @@ class MainWindow(QMainWindow):
         self.trigger_prediction.emit(self.embed_id, text, points, boxes)
         # TODO: Change this to something like thread.join() or emitting a signal from thread
 
-    def on_model_result(self, polygons):
+    def on_model_result(self, candid_polys):
         """Display model results and populate the object list."""
-        masks: list[MaskData] = self.image_viewer.add_prediction_polys(polygons)
-        for mask in masks:
-            self.add_to_object_list(mask)
+        candid_polys = list(filter(lambda a: a != [], candid_polys))
+        masks: list[MaskData] = self.image_viewer.add_prediction_polys(
+            list(map(lambda candidates: candidates[0], candid_polys))
+        )
+        for idx, mask in enumerate(masks):
+            self.add_candid_preds(mask, candid_polys[idx])
+
         self.image_viewer.clear_prompts()
 
     def delete_object(self, item: QListWidgetItem, mask_id: int):
@@ -679,10 +717,15 @@ class MainWindow(QMainWindow):
             item.setData(Qt.ItemDataRole.UserRole + 1, label_text)
             item.setBackground(QColor(*self.color_dict[label_text] + (50,)))
 
-    def add_to_object_list(self, shape_dict: MaskData):
+    def add_to_object_list(self, shape_dict: MaskData, total_candidates=0):
         custom_widget = CustomListItemWidget(list(self.color_dict.keys()))
 
-        custom_widget.setupFields(shape_dict.id, shape_dict.label, "Polygon")
+        custom_widget.setupFields(
+            shape_dict.id,
+            shape_dict.label,
+            "Polygon",
+            total_candidates,
+        )
         item = QListWidgetItem("")
         item.setData(Qt.ItemDataRole.UserRole, shape_dict.id)
         item.setData(Qt.ItemDataRole.UserRole + 1, shape_dict.label)
@@ -697,6 +740,22 @@ class MainWindow(QMainWindow):
         custom_widget.label_combo_box.currentTextChanged.connect(
             partial(self.change_object_label, item)
         )
+        return custom_widget
+
+    def add_candid_preds(self, mask_obj: MaskData, candidate_polys: List[List[int]]):
+        """
+        Add candidate predictions to object_list.
+        Args:
+            mask_obj: List[MaskData]
+                Mask information for one object. All candidates share the same information(except for the `points` field)
+            candidate_polys: List[List[int]]
+                List of candidate polgons for one object. 1 number of objets and C number of candidates each having k number of vertices : 1xCxk
+        """
+        object_item = self.add_to_object_list(
+            mask_obj, total_candidates=len(candidate_polys)
+        )
+        self.id_to_candids[mask_obj.id] = candidate_polys
+        object_item.candidate_changed.connect(self.on_candidate_changed)
 
     def on_object_selected(self, index):
         """Highlight the selected object's polygon."""
@@ -715,6 +774,12 @@ class MainWindow(QMainWindow):
             self.image_viewer.highlight_polygon(item.data(Qt.ItemDataRole.UserRole))
             item.setForeground(QColor("Blue"))
             self.prev_selected_obj_idx = index
+
+    def on_candidate_changed(self, mask_id, candidate_index):
+        if self.id_to_candids.get(mask_id, None):
+            self.image_viewer.update_candidate_mask(
+                mask_id, self.id_to_candids[mask_id][candidate_index]
+            )
 
     def control_selected(self, item: QListWidgetItem):
         """Update the ImageViewer's control based on list selection."""
@@ -769,7 +834,7 @@ class MainWindow(QMainWindow):
             ]
             self.image_viewer.display_polygons(mask_data_list)
             for mask_data in mask_data_list:
-                self.add_to_object_list(mask_data)
+                _ = self.add_to_object_list(mask_data)
 
     def keyPressEvent(self, a0: Optional[QKeyEvent]) -> None:
         if a0 is not None:

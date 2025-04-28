@@ -102,7 +102,7 @@ class LocalImageLoader(QThread):
         for idx in range(1, len(self.paths)):
 
             with open(self.paths[idx], "rb") as f:
-                self.image_list[idx] = Image.open(f.read(), "r")
+                self.image_list[idx] = f.read()
         # self.condition.wait(self.mutex)
         self.mutex.unlock()
 

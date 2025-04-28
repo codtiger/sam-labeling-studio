@@ -308,6 +308,30 @@ class ImageViewer(QGraphicsView):
                 self.mask_id += 1
         return masks
 
+    def update_candidate_mask(self, mask_id, new_mask: list[list]):
+        qpoly = QPolygonF([QPointF(coord[0], coord[1]) for coord in new_mask])
+        self.object_lock.lockForRead()
+        item = self.id_to_poly[mask_id]
+        item.setPolygon(qpoly)
+
+        if item and isinstance(item, QGraphicsPolygonItem):
+            old_brush = item.data(2).pop(0).brush()
+            for vertex_item in item.data(2):
+                self.image_scene.removeItem(vertex_item)
+                vertex_item = None
+            vertices = []
+            for i, point in enumerate(qpoly):
+                vertex_item = VertexItem(0, 0, 20, 20)
+                vertex_item.setPos(point.x() - 3, point.y() - 3)
+                vertex_item.setBrush(old_brush)
+                vertex_item.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable)
+                vertex_item.setData(0, item)  # Reference to polygon
+                vertex_item.setData(1, i)  # Index in polygon
+                self.image_scene.addItem(vertex_item)
+                vertices.append(vertex_item)
+            item.setData(2, vertices)
+        self.object_lock.unlock()
+
     def highlight_polygon(self, mask_id):
         """Highlight the selected polygon."""
         # TODO: handle deletion of polygons

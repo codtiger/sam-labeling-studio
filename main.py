@@ -1,6 +1,6 @@
 import sys
 from PyQt6.QtCore import QCoreApplication, Qt
-from PyQt6.QtWidgets import QApplication
+from PyQt6.QtWidgets import QApplication, QStyle
 from src.ui import MainWindow
 
 if __name__ == "__main__":
