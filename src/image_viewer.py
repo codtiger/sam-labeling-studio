@@ -88,7 +88,7 @@ class ImageViewer(QGraphicsView):
         Qt.GlobalColor.cyan,
     ]
 
-    def __init__(self, color_dict):
+    def __init__(self, color_dict: dict):
         super().__init__()
         self.image_scene = QGraphicsScene()
         self.setScene(self.image_scene)
@@ -96,7 +96,7 @@ class ImageViewer(QGraphicsView):
         self.object_lock = QReadWriteLock()
 
         self.color_dict = color_dict
-        self.__last_label__ = None
+        self.__last_label__ = list(self.color_dict.keys())[0]
         self.image_item = None  # QGraphicsPixmapItem for the image
         self.id_to_poly = {}  # mask_id --> poly dict
         self.boxes = []  # List of [start, end] QPointF pairs for box annotations
@@ -152,7 +152,7 @@ class ImageViewer(QGraphicsView):
 
     def set_last_label(self, label):
         if label == "":
-            self.__last_label__ = self.color_dict.keys[0]
+            self.__last_label__ = list(self.color_dict.keys())[0]
         else:
             self.__last_label__ = label
 
@@ -164,17 +164,19 @@ class ImageViewer(QGraphicsView):
         elif self.mode == "model" and self.image_item:
             self.image_item.setOpacity(0.4)
         self.control_change.emit(ControlItem.NORMAL)
-        self.clear_temp()  # Clear temporary annotations when switching modes
+        if self.temp_polygon or self.temp_lines:
+            self.clear_temp()  # Clear temporary annotations when switching modes
 
     def clear_temp(self):
         """Clear temporary drawing data."""
         self.temp_points = []
         for line in self.temp_lines:
             self.image_scene.removeItem(line)
+            line.deleteLater()
         self.temp_lines = []
         if self.temp_polygon:
             self.image_scene.removeItem(self.temp_polygon)
-            self.temp_polygon = None
+            # self.temp_polygon = None
 
     def clear_prompts(self):
         self.num_prompt_objs = 0
@@ -229,7 +231,8 @@ class ImageViewer(QGraphicsView):
                 self.prompt_mode = ModelPrompts.BOX
                 self.setDragMode(QGraphicsView.DragMode.NoDrag)
                 self.setCursor(Qt.CursorShape.CrossCursor)
-        self.clear_temp()
+        if self.temp_polygon or self.temp_lines:
+            self.clear_temp()
 
     def clear(self):
         """Clear all annotations and reset the scene."""
@@ -243,12 +246,8 @@ class ImageViewer(QGraphicsView):
         self.polygon_items = []
         self.temp_points = []
         self.temp_lines = []
+        self.temp_polygon = None
         self.temp_ellipses = []
-        if self.temp_polygon:
-            self.image_scene.removeItem(self.temp_polygon)
-            del self.temp_polygon
-            self.temp_polygon = None
-        self.clear_prompts()
         self.object_lock.unlock()
 
     def display_polygons(self, mask_data_list: list[MaskData]):
@@ -491,7 +490,6 @@ class ImageViewer(QGraphicsView):
             and is_inside_rect(self.image_scene.sceneRect(), pos)
         ):
             if self.temp_polygon:
-                self.image_scene.sceneRect
                 self.image_scene.removeItem(self.temp_polygon)
 
             temp_poly = QPolygonF(self.temp_points + [pos])
