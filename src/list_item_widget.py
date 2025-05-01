@@ -142,7 +142,7 @@ class CustomListItemWidget(QtWidgets.QWidget):
 
     def add_candidate_section(self):
         self.candidate_layout = QtWidgets.QHBoxLayout()
-        self.candidate_layout.setContentsMargins(2,0,2,0)
+        self.candidate_layout.setContentsMargins(2, 0, 2, 0)
         self.candidate_layout.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
 
         self.checkmark_button = QtWidgets.QPushButton("✔", self)
@@ -166,7 +166,7 @@ class CustomListItemWidget(QtWidgets.QWidget):
         self.right_arrow_button = QtWidgets.QPushButton(">", self)
         self.right_arrow_button.setObjectName("right_arrow_button")
         self.right_arrow_button.clicked.connect(self.next_candidate)
-        self.candidate_layout.addWidget(self.right_arrow_button)  
+        self.candidate_layout.addWidget(self.right_arrow_button)
         self.candidate_layout.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
         self.verticalLayout.addLayout(self.candidate_layout)
 
@@ -174,7 +174,6 @@ class CustomListItemWidget(QtWidgets.QWidget):
         is_multiple_candidates = self.total_candidates > 1
         self.left_arrow_button.setVisible(is_multiple_candidates)
         self.right_arrow_button.setVisible(is_multiple_candidates)
-        self.checkmark_button.setVisible(is_multiple_candidates)
 
     def remove_candidate_section(self):
         """Remove the candidate section from the widget."""
@@ -184,8 +183,11 @@ class CustomListItemWidget(QtWidgets.QWidget):
         self.right_arrow_button.deleteLater()
         self.checkmark_button.deleteLater()
         self.dots_hbox_layout.deleteLater()
+        self.verticalLayout.removeItem(self.candidate_layout)
         self.candidate_layout.deleteLater()
+        self.candidate_layout = None
 
+        # self.adjustSize()
 
     def add_candidate_dots(self):
         """Update the dots to reflect the current candidate and total candidates."""
@@ -199,25 +201,29 @@ class CustomListItemWidget(QtWidgets.QWidget):
     def next_candidate(self):
         """Switch to the next candidate."""
         if self.total_candidates > 1:
-            self.dots_hbox_layout.itemAt(self.current_candidate_index).widget().setStyleSheet(
-                "color: gray;"
-            )
-            self.current_candidate_index = (self.current_candidate_index + 1) % self.total_candidates
-            self.dots_hbox_layout.itemAt(self.current_candidate_index).widget().setStyleSheet(
-                "color: black;"
-            )
+            self.dots_hbox_layout.itemAt(
+                self.current_candidate_index
+            ).widget().setStyleSheet("color: gray;")
+            self.current_candidate_index = (
+                self.current_candidate_index + 1
+            ) % self.total_candidates
+            self.dots_hbox_layout.itemAt(
+                self.current_candidate_index
+            ).widget().setStyleSheet("color: black;")
             self.candidate_changed.emit(self.mask_id, self.current_candidate_index)
 
     def previous_candidate(self):
         """Switch to the previous candidate."""
         if self.total_candidates > 1:
-            self.dots_hbox_layout.itemAt(self.current_candidate_index).widget().setStyleSheet(
-                "color: gray;"
-            )
-            self.current_candidate_index = (self.current_candidate_index - 1) % self.total_candidates
-            self.dots_hbox_layout.itemAt(self.current_candidate_index).widget().setStyleSheet(
-                "color: black;"
-            )
+            self.dots_hbox_layout.itemAt(
+                self.current_candidate_index
+            ).widget().setStyleSheet("color: gray;")
+            self.current_candidate_index = (
+                self.current_candidate_index - 1
+            ) % self.total_candidates
+            self.dots_hbox_layout.itemAt(
+                self.current_candidate_index
+            ).widget().setStyleSheet("color: black;")
             self.candidate_changed.emit(self.mask_id, self.current_candidate_index)
 
     def select_candidate(self):

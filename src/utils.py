@@ -169,13 +169,37 @@ def is_inside_rect(rect: QRectF, point: QPoint):
     return True
 
 
-def get_convex_hull(pred_img: np.ndarray, bg_value: int = 0) -> np.ndarray:
-    xs, ys = np.where(pred_img != bg_value)
-    indices = list(zip(ys, xs))
+def get_convex_hull(pred_img: np.ndarray, bg_value: int = 0, k=6) -> np.ndarray:
+
+    pred_cumsum = pred_img[pred_img.any(1)].cumsum(axis=1)
+    start_y = pred_img[pred_img.any(1)].argmax(axis=1)
+    end_y = pred_cumsum.argmax(axis=1)
+    xs = np.where(pred_img.any(1,keepdims=False))[0]
+    # xs, ys = np.apply_along_axis(get_first_last_occurrence, 1, pred_img)
+    # xs, ys = np.where(pred_img != bg_value)
+    indices = list(zip(np.concatenate((xs,xs)), np.concatenate((start_y, end_y))))
     # from scipy.spatial import ConvexHull
     import smallest_kgon as s_kgon
 
     # hull_indices = ConvexHull(np.array(indices)).vertices
     # convex_hull = np.array([indices[i] for i in hull_indices])
-    hull_points = s_kgon.smallest_kgon(np.array(indices).astype(np.float32), k=6)
+    hull_points = s_kgon.smallest_kgon(np.array(indices).astype(np.float32), k=k)
     return hull_points
+
+def get_convex_hull_v2(pred_img: np.ndarray, bg_value: int = 0, k=6) -> np.ndarray:
+    # from scipy.spatial import ConvexHull
+    import smallest_kgon as s_kgon
+
+    xs, ys = np.where(pred_img != bg_value)
+    indices = list(zip(xs, ys))
+    hull_points = s_kgon.smallest_kgon(np.array(indices).astype(np.float32), k=k)
+    return hull_points
+
+def get_convex_hull_v3(pred_img: np.ndarray, bg_value: int = 0, k=6) -> np.ndarray:
+    from scipy.spatial import ConvexHull
+
+    xs, ys = np.where(pred_img != bg_value)
+    indices = list(zip(xs, ys))
+    hull_indices = ConvexHull(np.array(indices)).vertices
+    convex_hull = np.array([indices[i] for i in hull_indices])
+    return convex_hull

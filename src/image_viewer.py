@@ -45,6 +45,20 @@ class VertexItem(QGraphicsEllipseItem):
     def __init__(self, x, y, width, height):
         super().__init__(x, y, width, height)
         self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemSendsGeometryChanges, True)
+        self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemSendsGeometryChanges, True)
+        self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations, True)
+        self.size = 10
+
+    def paint(self, painter, option, widget=None):
+        """Override the paint method to ensure constant size."""
+        painter.setBrush(self.brush())
+        painter.setPen(self.pen())
+        rect = QRectF(-self.size / 2, -self.size / 2, self.size, self.size)
+        painter.drawEllipse(rect)
+
+    def boundingRect(self):
+        """Override boundingRect to match the constant size."""
+        return QRectF(-self.size / 2, -self.size / 2, self.size, self.size)
 
     def itemChange(self, change, value):
         if change == QGraphicsItem.GraphicsItemChange.ItemPositionChange and self.data(
@@ -257,7 +271,7 @@ class ImageViewer(QGraphicsView):
                 self.polygon_items.append(polygon_item)
                 # Add movable vertices
                 for i, point in enumerate(qpoly):
-                    vertex_item = VertexItem(0, 0, 20, 20)
+                    vertex_item = VertexItem(0, 0, 10, 10)
                     vertex_item.setPos(point.x() - 3, point.y() - 3)
                     vertex_item.setBrush(QColor(*self.color_dict[mask_data.label]))
                     vertex_item.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable)
@@ -276,7 +290,7 @@ class ImageViewer(QGraphicsView):
         self.polygon_items = []
         masks: list[MaskData] = []
         for mask in mask_arr:
-            qpoly = QPolygonF([QPointF(x, y) for x, y in mask])
+            qpoly = QPolygonF([QPointF(y, x) for x, y in mask])
             polygon_item = self.image_scene.addPolygon(
                 qpoly,
                 pen=QColor(*self.color_dict["background"]),
@@ -296,7 +310,7 @@ class ImageViewer(QGraphicsView):
                 self.id_to_poly[self.mask_id] = polygon_item
                 # Add movable vertices
                 for i, point in enumerate(qpoly):
-                    vertex_item = VertexItem(0, 0, 20, 20)
+                    vertex_item = VertexItem(0, 0, 10, 10)
                     vertex_item.setPos(point.x() - 3, point.y() - 3)
                     vertex_item.setBrush(QColor(*self.color_dict["background"]))
                     vertex_item.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable)
@@ -309,7 +323,7 @@ class ImageViewer(QGraphicsView):
         return masks
 
     def update_candidate_mask(self, mask_id, new_mask: list[list]):
-        qpoly = QPolygonF([QPointF(coord[0], coord[1]) for coord in new_mask])
+        qpoly = QPolygonF([QPointF(coord[1], coord[0]) for coord in new_mask])
         self.object_lock.lockForRead()
         item = self.id_to_poly[mask_id]
         item.setPolygon(qpoly)
@@ -321,7 +335,7 @@ class ImageViewer(QGraphicsView):
                 vertex_item = None
             vertices = []
             for i, point in enumerate(qpoly):
-                vertex_item = VertexItem(0, 0, 20, 20)
+                vertex_item = VertexItem(0, 0, 10, 10)
                 vertex_item.setPos(point.x() - 3, point.y() - 3)
                 vertex_item.setBrush(old_brush)
                 vertex_item.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable)
@@ -445,6 +459,12 @@ class ImageViewer(QGraphicsView):
                         star_path,
                         QPen(Qt.GlobalColor.yellow),
                         QBrush(self.current_prompt_color),
+                    )
+                    star_item.setFlag(
+                        QGraphicsItem.GraphicsItemFlag.ItemSendsGeometryChanges, True
+                    )
+                    star_item.setFlag(
+                        QGraphicsItem.GraphicsItemFlag.ItemSendsGeometryChanges, True
                     )
                     self.prompt_stars.append(star_item)
                 elif self.prompt_mode == ModelPrompts.BOX:

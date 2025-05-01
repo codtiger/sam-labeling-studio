@@ -353,6 +353,13 @@ class MainWindow(QMainWindow):
             self.file_menu.addAction(self.import_action)
             self.export_action.triggered.connect(self.on_export_selected)
             self.import_action.triggered.connect(self.on_import_selected)
+        if self.edit_menu:
+            self.copy_action = QAction("Copy", self)
+            self.cut_action = QAction("Cut", self)
+            self.paste_action = QAction("Paste", self)
+            self.edit_menu.addAction(self.copy_action)
+            self.edit_menu.addAction(self.cut_action)
+            self.edit_menu.addAction(self.paste_action)
 
         # Toolbar with actions
         self.toolbar = self.addToolBar("Tools")
@@ -691,7 +698,12 @@ class MainWindow(QMainWindow):
         text = self.text_input.text()
         points = self.image_viewer.prompt_star_coords
         boxes = self.image_viewer.prompt_box_coords
+
+        self.manual_mode_radio.setChecked(True)
+        self.model_mode_radio.setChecked(False)
+
         self.trigger_prediction.emit(self.embed_id, text, points, boxes)
+
         # TODO: Change this to something like thread.join() or emitting a signal from thread
 
     def on_model_result(self, candid_polys):
