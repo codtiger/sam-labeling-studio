@@ -4,7 +4,7 @@ from models.sam2.build_sam import build_sam2
 from models.sam2.sam2_image_predictor import SAM2ImagePredictor
 import cv2
 
-from utils import get_convex_hull, get_convex_hull_v2, get_convex_hull_v3
+from utils import get_convex_hull, get_convex_hull_v2
 
 from PIL import Image
 import numpy as np
@@ -17,18 +17,16 @@ DEVICE = "mps"  # Or "cuda", "cpu"
 
 
 image_np = None
-image_path = "/Users/am1rrad/entechlab/examples/example5.png"
-# with open(image_path, "rb") as image_file:
-    # Read the image file and convert it to a numpy array
-# contents = image_file.read()
+image_path = ""
 image = Image.open(image_path).convert("RGB")
 image_np = np.array(image)
-    # image_np = np.ascontiguousarray(image_np)  # Ensure contiguous memory
+image_np = np.ascontiguousarray(image_np)  # Ensure contiguous memory
 
 base_model = build_sam2(CFG_PATH, CKPT_PATH, device=DEVICE)
 predictor = SAM2ImagePredictor(base_model)
 
 predictor.set_image(image_np)
+
 
 # points = [
 #     (100, 100),
@@ -73,6 +71,7 @@ def run_benchmark(preds):
     print(f"get_convex_hull: mean={mean_hull1:.6f}s, std={std_hull1:.6f}s")
     print(f"get_convex_hull_v2: mean={mean_hull2:.6f}s, std={std_hull2:.6f}s")
 
+
 if __name__ == "__main__":
 
     points = []
@@ -80,7 +79,7 @@ if __name__ == "__main__":
     def click_event(event, x, y, flags, param):
         global points
         if event == cv2.EVENT_LBUTTONDOWN:  # Left click to add a point
-            points.append([x,y])
+            points.append([x, y])
             cv2.circle(image_display, (x, y), 5, (0, 0, 255), -1)  # Draw point on image
             cv2.imshow("Image", image_display)
         elif event == cv2.EVENT_RBUTTONDOWN:  # Right click to process points
@@ -90,7 +89,7 @@ if __name__ == "__main__":
                     point_coords=points,
                     point_labels=np.ones(len(points)),
                     box=None,
-#                    mask_input=None,
+                    #                    mask_input=None,
                 )
                 for pred in preds:
                     hull = get_convex_hull(pred, bg_value=0, k=6)
@@ -99,7 +98,11 @@ if __name__ == "__main__":
                         cv2.line(
                             image_display,
                             tuple(reversed(hull[i].astype(np.int32).tolist())),
-                            tuple(reversed(hull[(i + 1) % len(hull)].astype(np.int32).tolist())),
+                            tuple(
+                                reversed(
+                                    hull[(i + 1) % len(hull)].astype(np.int32).tolist()
+                                )
+                            ),
                             (0, 255, 0),
                             2,
                         )
@@ -114,3 +117,4 @@ if __name__ == "__main__":
     print("Left click to select points, right click to process.")
     cv2.waitKey(0)
     cv2.destroyAllWindows()
+
