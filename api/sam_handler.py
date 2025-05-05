@@ -129,6 +129,7 @@ async def predict_on_image(
     image_id: str = Path(
         ..., description="The unique ID of the previously embedded image."
     ),
+    k: int = 6,
     request_data: PredictRequestData = ...,
 ):
     """
@@ -202,7 +203,7 @@ async def predict_on_image(
                 # best_mask = preds[confids.argmax()]
                 preds_filtered = preds[confids >= 0.1]
                 polygons = [
-                    get_convex_hull(mask).astype(np.int32).tolist()
+                    get_convex_hull(mask, k=k).astype(np.int32).tolist()
                     for mask in preds_filtered
                 ]
                 # polygon = get_convex_hull(

@@ -36,8 +36,7 @@ class RequestWorker(QObject):
 
     def predict(self, image_id, text, point_groups: list, boxes: list):
         response = requests.post(
-            self.base_url + "predict/" + image_id,
+            self.base_url + "predict/" + image_id + "/?k=50",
             json={"point_groups": point_groups, "boxes": boxes},
         )
         self.prediction_ready.emit(response.json()["predictions"])
-
