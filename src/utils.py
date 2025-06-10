@@ -63,10 +63,22 @@ class ModelPrompts(Enum):
 
 @dataclass
 class MaskData(object):
-    def __init__(self, mask_id: int, points: list, label):
+    """
+    Mask information data class(poly or box)
+    mask_id: int
+        Unique id for the mask()
+    points: list[list[int]]
+        List of [x,y] coordinates
+    label: int
+        label id
+    center: (x,y)
+    """
+
+    def __init__(self, mask_id: int, points: list, label, center):
         self.id = mask_id
         self.points = points
         self.label = label
+        self.center = center
 
 
 class ShapeDelegate(QStyledItemDelegate):
@@ -195,4 +207,3 @@ def get_convex_hull_v2(pred_img: np.ndarray, bg_value: int = 0, k=6) -> np.ndarr
     indices = list(zip(xs, ys))
     hull_points = s_kgon.smallest_kgon(np.array(indices).astype(np.float32), k=k)
     return hull_points
-

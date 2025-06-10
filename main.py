@@ -1,10 +1,12 @@
 import sys
+import os
 from PyQt6.QtCore import QCoreApplication, Qt
 from PyQt6.QtWidgets import QApplication, QStyle
 from src.ui import MainWindow
 
 
 from PyQt6.QtGui import QPalette, QColor
+
 
 def apply_dark_theme(app):
     """Apply a dark theme to the application."""
@@ -34,9 +36,28 @@ def apply_dark_theme(app):
     app.setPalette(dark_palette)
 
 
+def change_title():
+    if sys.platform.startswith("darwin"):
+        # Set app name, if PyObjC is installed
+        # Python 2 has PyObjC preinstalled
+        # Python 3: pip3 install pyobjc-framework-Cocoa
+        try:
+            from Foundation import NSBundle
+
+            bundle = NSBundle.mainBundle()
+            if bundle:
+                app_info = bundle.localizedInfoDictionary() or bundle.infoDictionary()
+                if app_info:
+                    app_info["CFBundleName"] = "Sam Studio"
+        except ImportError:
+            pass
+
+
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     apply_dark_theme(app)
     window = MainWindow()
+    window.setWindowTitle("Sam Labeling Studio")
     window.show()
+    change_title()
     sys.exit(app.exec())

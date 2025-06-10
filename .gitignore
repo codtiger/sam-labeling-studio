@@ -14,8 +14,8 @@ venv
 .DS_Store
 
 # Weights / checkpoints
-.pt
-.ckpt
+*.pt
+*.ckpt
 
 # environment vars
 .env

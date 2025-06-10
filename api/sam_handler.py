@@ -3,15 +3,17 @@ import io
 import uuid
 from contextlib import asynccontextmanager
 from typing import List, Dict, Any, Optional, Tuple
+import os
+import argparse
 
 import numpy as np
 from PIL import Image
 from fastapi import FastAPI, UploadFile, File, HTTPException, Path
 from pydantic import BaseModel, Field
 
-CKPT_PATH = "weights/sam2.1_hiera_base_plus.pt"
-CFG_PATH = "configs/sam2.1/sam2.1_hiera_b+.yaml"
-DEVICE = "mps"  # Or "cuda", "cpu"
+# CKPT_PATH = "weights/sam2.1_hiera_base_plus.pt"
+# CFG_PATH = "configs/sam2.1/sam2.1_hiera_b+.yaml"
+DEVICE = os.environ["DEVICE"]  # "mps "Or "cuda" or  "cpu"
 
 
 from src.models.sam2.build_sam import build_sam2
@@ -25,6 +27,8 @@ logger = logging.getLogger(__name__)
 # Controlling app's global state across requests
 app_state: Dict[str, Any] = {}
 
+CKPT_PATH = os.environ.get('CKPT_PATH', "weights/sam2.1_hiera_base_plus.pt")
+CFG_PATH = os.environ.get('CFG_PATH', "configs/sam2.1/sam2.1_hiera_b+.yaml")
 
 class PredictRequestData(BaseModel):
     point_groups: List[List[Tuple[float, float]]] = Field(
@@ -231,5 +235,4 @@ async def read_root():
 
 if __name__ == "__main__":
     import uvicorn
-
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)

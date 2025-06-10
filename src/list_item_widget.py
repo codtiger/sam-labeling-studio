@@ -18,6 +18,7 @@ class CustomListItemWidget(QtWidgets.QWidget):
     deleted = pyqtSignal(int)
     candidate_changed = pyqtSignal(int, int)
     candidate_selected = pyqtSignal(int, int)
+    visibility_changed = pyqtSignal(bool)
 
     eye_on_icon = QIcon("assets/eye-on.svg")
     eye_off_icon = QIcon("assets/eye-off.svg")
@@ -134,7 +135,8 @@ class CustomListItemWidget(QtWidgets.QWidget):
         self.shape_label.setText(shape_type)
         self.label_combo_box.setCurrentText(label)
         self.total_candidates = total_candidates
-        self.add_candidates()
+        if self.total_candidates != 0:
+            self.add_candidates()
 
     def add_candidates(self):
         self.current_candidate_index = 0
@@ -253,3 +255,4 @@ class CustomListItemWidget(QtWidgets.QWidget):
         else:
             self.visibility_button.setIcon(self.eye_on_icon)
             self.visibility_toggle = False
+        self.visibility_changed.emit(self.visibility_toggle)

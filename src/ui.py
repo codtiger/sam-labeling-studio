@@ -35,6 +35,7 @@ from PyQt6.QtCore import (
 )
 from PIL import Image
 from PyQt6.QtGui import (
+    QCursor,
     QKeySequence,
     QPixmap,
     QIcon,
@@ -48,6 +49,7 @@ from .image_viewer import ImageViewer
 from .list_item_widget import CustomListItemWidget
 from .threads import AsyncRemoteImageLoader, LocalImageLoader
 from .sam_thread import RequestWorker
+from .edit_controls import Actions, EditManager
 from .utils import (
     pil_to_qimage,
     read_colors,
@@ -60,13 +62,14 @@ from .utils import (
     MaskData,
 )
 from .formats import coco
+from src import edit_controls
 
 logger = get_logger("Main UI")
 
 
 class MainWindow(QMainWindow):
 
-    MEMORY_LIMIT = 200
+    MEMORY_LIMIT = 200  # in megabytes
     MAX_PARALLEL_REQUESTS = 10
 
     trigger_embbeding = pyqtSignal(bytes)
@@ -82,6 +85,10 @@ class MainWindow(QMainWindow):
         self.setFocus()
         config = self.__load__config("configs/app_config.yaml")
         self.color_dict = read_colors(config["label_colors_file"]) if config else {}
+
+        self.edit_hook = EditManager(
+            set_actions=[], state_dict={}, latest_assigned_ids={"mask": 0}
+        )
         # Central widget with vertical layout
         central_widget = QWidget()
         layout = QVBoxLayout()
@@ -340,23 +347,30 @@ class MainWindow(QMainWindow):
         self.menu = self.menuBar()
         self.file_menu = self.menu.addMenu("File")
         self.edit_menu = self.menu.addMenu("Edit")
-        self.load_url_action = QAction("Load URL List", self)
-        self.load_images_action = QAction("Load Images", self)
-        self.load_url_action.triggered.connect(self.load_url_list)
-        self.load_images_action.triggered.connect(self.show_filepicker_dialog)
         if self.file_menu:
+            self.load_url_action = QAction("Load URL List", self)
+            self.load_images_action = QAction("Load Images", self)
+            self.load_url_action.triggered.connect(self.load_url_list)
+            self.load_images_action.triggered.connect(self.show_filepicker_dialog)
             self.file_menu.addAction(self.load_url_action)
             self.file_menu.addAction(self.load_images_action)
+            # Export / Import actions
             self.export_action = QAction("Export")
             self.import_action = QAction("Import")
+            # Configuration Action
             self.file_menu.addAction(self.export_action)
             self.file_menu.addAction(self.import_action)
             self.export_action.triggered.connect(self.on_export_selected)
             self.import_action.triggered.connect(self.on_import_selected)
         if self.edit_menu:
             self.copy_action = QAction("Copy", self)
+            self.copy_action.setShortcut(QKeySequence.StandardKey.Copy)
+            self.copy_action.triggered.connect(self.handle_copy)
             self.cut_action = QAction("Cut", self)
+            self.cut_action.setShortcut(QKeySequence.StandardKey.Copy)
             self.paste_action = QAction("Paste", self)
+            self.paste_action.setShortcut(QKeySequence.StandardKey.Paste)
+            self.paste_action.triggered.connect(self.handle_paste)
             self.edit_menu.addAction(self.copy_action)
             self.edit_menu.addAction(self.cut_action)
             self.edit_menu.addAction(self.paste_action)
@@ -405,6 +419,11 @@ class MainWindow(QMainWindow):
         # signal connectors
         self.image_viewer.object_added.connect(self.add_to_object_list)
         self.image_viewer.control_change.connect(self.set_control)
+        self.image_viewer.object_selected.connect(
+            lambda mask_data: self.edit_hook.update_state(
+                action=None, state=None, obj=mask_data
+            )
+        )
 
         # Initiate model
         self.request_url = "http://0.0.0.0:8000/"
@@ -691,6 +710,17 @@ class MainWindow(QMainWindow):
         else:
             self.filename_label.setText("No file loaded")
 
+    def handle_copy(self):
+        self.edit_hook.copy()
+
+    def handle_paste(self):
+        global_pos = self.image_viewer.mapFromGlobal(self.cursor().pos())
+        scene_pos = self.image_viewer.mapToScene(global_pos)
+        new_object = self.edit_hook.paste(pointer=scene_pos)
+        if isinstance(new_object, MaskData):
+            self.add_to_object_list(new_object, 0)
+            self.image_viewer.display_polygons([new_object])
+
     def run_prediction(self):
         """Run the segmentation model with user inputs."""
         if not self.current_image:
@@ -718,15 +748,15 @@ class MainWindow(QMainWindow):
         self.image_viewer.clear_prompts()
 
     def delete_object(self, item: QListWidgetItem, mask_id: int):
-        self.image_viewer.removePolygon(item.data(Qt.ItemDataRole.UserRole))
+        self.image_viewer.removePolygon(item.data(Qt.ItemDataRole.UserRole).id)
         self.object_list.takeItem(self.object_list.row(item))
 
     def change_object_label(self, item: QListWidgetItem, label_text):
         self.image_viewer.changePolygonLabel(
-            item.data(Qt.ItemDataRole.UserRole), label_text
+            item.data(Qt.ItemDataRole.UserRole).id, label_text
         )
         if item:
-            item.setData(Qt.ItemDataRole.UserRole + 1, label_text)
+            item.data(Qt.ItemDataRole.UserRole).label = label_text
             item.setBackground(QColor(*self.color_dict[label_text] + (50,)))
 
     def add_to_object_list(self, shape_dict: MaskData, total_candidates=0):
@@ -739,14 +769,16 @@ class MainWindow(QMainWindow):
             total_candidates,
         )
         item = QListWidgetItem("")
-        item.setData(Qt.ItemDataRole.UserRole, shape_dict.id)
-        item.setData(Qt.ItemDataRole.UserRole + 1, shape_dict.label)
+        # item.setData(Qt.ItemDataRole.UserRole, shape_dict.id)
+        # item.setData(Qt.ItemDataRole.UserRole + 1, shape_dict.label)
+        item.setData(Qt.ItemDataRole.UserRole, shape_dict)
         item.setSizeHint(custom_widget.sizeHint())
 
         # item.setFlags(item.flags() | Qt.ItemFlag.ItemIsEditable)
         item.setBackground(QColor(*self.color_dict[shape_dict.label] + (50,)))
         self.object_list.addItem(item)
         custom_widget.deleted.connect(partial(self.delete_object, item))
+        # custom_widget.visibility_changed.connect(lambda i:)
         self.object_list.setItemWidget(item, custom_widget)
 
         custom_widget.label_combo_box.currentTextChanged.connect(
@@ -781,9 +813,9 @@ class MainWindow(QMainWindow):
                 prev_item = self.object_list.item(self.prev_selected_obj_idx)
                 if prev_item:
                     self.image_viewer.unhighlight_polygon(
-                        prev_item.data(Qt.ItemDataRole.UserRole)
+                        prev_item.data(Qt.ItemDataRole.UserRole).id
                     )
-            self.image_viewer.highlight_polygon(item.data(Qt.ItemDataRole.UserRole))
+            self.image_viewer.highlight_polygon(item.data(Qt.ItemDataRole.UserRole).id)
             item.setForeground(QColor("Blue"))
             self.prev_selected_obj_idx = index
 
@@ -825,11 +857,20 @@ class MainWindow(QMainWindow):
             )
             row = self.object_list.item(i)
             if row:
-                id = row.data(Qt.ItemDataRole.UserRole)
-                label = row.data(Qt.ItemDataRole.UserRole + 1)
-                polygon = self.image_viewer.id_to_poly[id].polygon()
+                # id = row.data(Qt.ItemDataRole.UserRole)
+                # label = row.data(Qt.ItemDataRole.UserRole + 1)
+                mask_data = row.data(Qt.ItemDataRole.UserRole)
+                # polygon = self.image_viewer.id_to_poly[id].polygon()
+                polygon = self.image_viewer.id_to_poly[mask_data.id].polygon()
                 polygon_points = [[p.x(), p.y()] for p in polygon]
-                objects.append({"id": id, "label": label, "polygon": polygon_points})
+                objects.append(
+                    {
+                        "id": id,
+                        "label": mask_data.label,
+                        "polygon": polygon_points,
+                        "center": mask_data.center,
+                    }
+                )
         self.annotations[image_url] = {"objects": objects}
         self.current_idx += 1
 
@@ -841,6 +882,7 @@ class MainWindow(QMainWindow):
                     mask_id=obj["id"],
                     points=obj["polygon"],
                     label=obj["label"],
+                    center=obj["center"],
                 )
                 for obj in anno["objects"]
             ]

@@ -78,6 +78,10 @@ class ImageViewer(QGraphicsView):
 
     object_added = pyqtSignal(MaskData)
     control_change = pyqtSignal(ControlItem)
+    object_selected = pyqtSignal(
+        MaskData
+    )  # Change of selection by hovering, useful for copying objects
+    object_deselected = pyqtSignal(int)
 
     COLOR_CYCLE = [
         Qt.GlobalColor.black,
@@ -300,6 +304,7 @@ class ImageViewer(QGraphicsView):
                     mask_id=self.mask_id,
                     points=[QPoint(x, y) for x, y in mask],
                     label="background",
+                    center=polygon_item.boundingRect().center(),
                 )
                 masks.append(mask_data)
                 polygon_item.setData(0, self.mask_id)
@@ -528,8 +533,16 @@ class ImageViewer(QGraphicsView):
             elif len(self.image_scene.items()) > 1:
                 item = self.image_scene.itemAt(pos, self.transform())
                 if isinstance(item, QGraphicsPolygonItem):
-                    mask_id, label = item.data(0), item.data(1)
+                    mask_id, label, vertices = item.data(0), item.data(1), item.data(2)
                     item.setBrush(QColor(*self.color_dict[label] + (50,)))
+                    self.object_selected.emit(
+                        MaskData(
+                            mask_id=mask_id,
+                            label=label,
+                            points=[[v.x(), v.y()] for v in vertices],
+                            center=item.boundingRect().center(),
+                        )
+                    )
                     # for vertex in item.data(2):
                     #     vertex.setBrush(
                     #         QBrush(
@@ -541,6 +554,7 @@ class ImageViewer(QGraphicsView):
                     self.shaded_poly = item
                 elif self.shaded_poly is not None:
                     self.shaded_poly.setBrush(Qt.GlobalColor.transparent)
+                    self.object_deselected.emit(1)
 
         return super().mouseMoveEvent(event)
 
@@ -716,20 +730,22 @@ class ImageViewer(QGraphicsView):
                     for ellipse in self.temp_ellipses:
                         self.image_scene.removeItem(ellipse)
                         polygon_item.setData(1, self.__last_label__)
+
                     mask_data = MaskData(
                         self.mask_id,
                         self.temp_points,
                         self.__last_label__,
+                        center=polygon_item.boundingRect().center(),
                     )
+                    self.object_added.emit(mask_data)
                     self.mask_id += 1
                     # emit new mask to the object list
-                    self.object_added.emit(mask_data)
                     self.temp_lines = []
                     self.temp_points = []
                     self.temp_ellipses = []
 
                     # Add movable vertices to the final polygon
-                    verteces = []
+                    vertices = []
                     for i, point in enumerate(final_poly):
                         vertex_item = VertexItem(0, 0, 15, 15)
                         vertex_item.setPos(point.x() - 5, point.y() - 5)
@@ -742,9 +758,9 @@ class ImageViewer(QGraphicsView):
                         vertex_item.setData(0, polygon_item)
                         vertex_item.setData(1, i)
                         self.image_scene.addItem(vertex_item)
-                        verteces.append(vertex_item)
+                        vertices.append(vertex_item)
 
-                    polygon_item.setData(2, verteces)
+                    polygon_item.setData(2, vertices)
                     # reset states to NORMAL
                     self.prev_shape = self.current_control
                     self.current_control = ControlItem.NORMAL
