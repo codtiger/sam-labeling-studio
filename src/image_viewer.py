@@ -418,19 +418,10 @@ class ImageViewer(QGraphicsView):
             elif self.current_control == ControlItem.POLYGON:
                 self.temp_points.append(pos)
                 ellipse = self.image_scene.addEllipse(
-                    pos.x() - 6, pos.y() - 6, 15, 15, brush=Qt.GlobalColor.red
+                    pos.x() - 7.5, pos.y() - 7.5, 15, 15, brush=Qt.GlobalColor.red
                 )
                 self.temp_ellipses.append(ellipse)
-                # LOOK AT THIS
-                if len(self.temp_points) == 2:
-                    line = self.image_scene.addLine(
-                        self.temp_points[-2].x(),
-                        self.temp_points[-2].y(),
-                        pos.x(),
-                        pos.y(),
-                        QPen(Qt.GlobalColor.black),
-                    )
-                    self.temp_lines.append(line)
+
             elif self.current_control == ControlItem.ROI:
                 self.is_selecting_roi = True
                 self.start_roi_pos = event.pos()
@@ -491,7 +482,7 @@ class ImageViewer(QGraphicsView):
         """Spy on mouse move events from the main window."""
         if (
             self.current_control == ControlItem.POLYGON
-            and len(self.temp_points) >= 2
+            and len(self.temp_points) >= 1
             and is_inside_rect(self.image_scene.sceneRect(), pos)
         ):
             if self.temp_polygon:
@@ -748,7 +739,7 @@ class ImageViewer(QGraphicsView):
                     vertices = []
                     for i, point in enumerate(final_poly):
                         vertex_item = VertexItem(0, 0, 15, 15)
-                        vertex_item.setPos(point.x() - 5, point.y() - 5)
+                        vertex_item.setPos(point.x(), point.y())
                         vertex_item.setBrush(
                             QBrush(QColor(*self.color_dict[self.__last_label__]))
                         )

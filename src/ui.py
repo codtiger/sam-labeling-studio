@@ -50,6 +50,7 @@ from .list_item_widget import CustomListItemWidget
 from .threads import AsyncRemoteImageLoader, LocalImageLoader
 from .sam_thread import RequestWorker
 from .edit_controls import Actions, EditManager
+from .extra_dialogs import PreferencesDialog
 from .utils import (
     pil_to_qimage,
     read_colors,
@@ -81,6 +82,10 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("Image Annotation Platform")
         self.resize(1920, 1080)
+
+        self.status_bar = self.statusBar()
+        if self.status_bar:
+            self.status_bar.showMessage("✅ Ready")
 
         self.setFocus()
         config = self.__load__config("configs/app_config.yaml")
@@ -345,6 +350,22 @@ class MainWindow(QMainWindow):
 
         # Menu bar
         self.menu = self.menuBar()
+
+        self.model_configs = {
+            "host": "localhost",
+            "port": 8000,
+            "k": 5,
+            "confidence_threshold": 0.5,
+            "nms_threshold": 0.5,
+            "num_points": 10,
+        }
+
+        self.main_menu = self.menu.addMenu("")
+        if self.main_menu:
+            self.preferences_action = QAction("Preferences", self)
+            self.preferences_action.triggered.connect(self.show_preferences_dialog)
+            self.main_menu.addAction(self.preferences_action)
+
         self.file_menu = self.menu.addMenu("File")
         self.edit_menu = self.menu.addMenu("Edit")
         if self.file_menu:
@@ -399,6 +420,10 @@ class MainWindow(QMainWindow):
             self.toolbar.addAction(self.undo_action)
             self.toolbar.addAction(self.redo_action)
 
+            self.refresh_connection_action = QAction("Refresh", self)
+            self.refresh_connection_action.setIcon(QIcon("assets/refresh_api.svg"))
+            self.toolbar.addAction(self.refresh_connection_action)
+
         # async loader
         self.async_remote_loader = None
         self.loader_thread: Optional[QThread] = None
@@ -439,6 +464,7 @@ class MainWindow(QMainWindow):
 
         self.model_worker.image_embedded.connect(self.on_image_embedded)
         self.model_worker.prediction_ready.connect(self.on_model_result)
+        self.model_worker.connection_failed.connect(self.show_api_warning)
 
         self.trigger_embbeding.connect(self.model_worker.post_image)
         self.trigger_prediction.connect(self.model_worker.predict)
@@ -836,10 +862,10 @@ class MainWindow(QMainWindow):
             self.image_viewer.set_control(control)
         elif control == ControlItem.ZOOM_IN:
             self.image_viewer.zoom(control)
-            self.control_list.setCurrentRow(0)
+            self.control_list.clearSelection()
         elif control == ControlItem.ZOOM_OUT:
             self.image_viewer.zoom(control)
-            self.control_list.setCurrentRow(0)
+            self.control_list.clearSelection()
         elif control == ControlItem.NORMAL:
             self.image_viewer.set_control(control)
         elif control == ControlItem.STAR:
@@ -865,7 +891,7 @@ class MainWindow(QMainWindow):
                 polygon_points = [[p.x(), p.y()] for p in polygon]
                 objects.append(
                     {
-                        "id": id,
+                        "id": mask_data.id,
                         "label": mask_data.label,
                         "polygon": polygon_points,
                         "center": mask_data.center,
@@ -898,3 +924,22 @@ class MainWindow(QMainWindow):
                 self.go_back()
 
         return super().keyPressEvent(a0)
+
+    def show_preferences_dialog(self):
+        dialog = PreferencesDialog(self, defaults=self.model_configs)
+        if dialog.exec():
+            self.settings = dialog.get_values()
+            # Optionally, apply settings immediately or save to config
+            logger.info(f"Updated settings: {self.settings}")
+
+    def show_api_warning(self, message="API connection failed!"):
+        label = QLabel()
+        label.setText(
+            f'<span style="color:#d9534f;vertical-align:middle;">⚠️ {message}</span>'
+        )
+        label.setContentsMargins(0, 0, 8, 0)
+        # Clear previous widgets
+        if self.status_bar:
+            self.status_bar.clearMessage()
+            self.status_bar.addWidget(label)
+            self.status_bar.show()

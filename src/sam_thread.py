@@ -15,6 +15,7 @@ class RequestWorker(QObject):
 
     image_embedded = pyqtSignal(str)
     prediction_ready = pyqtSignal(list)
+    connection_failed = pyqtSignal(str)
 
     def __init__(self, base_url):
         super().__init__()
@@ -31,8 +32,7 @@ class RequestWorker(QObject):
             )
             return self.image_embedded.emit(response.json()["image_id"])
         except requests.exceptions.ConnectionError as e:
-            print("Cannot make a connection!")
-            return ""
+            self.connection_failed.emit("Connection Error")
 
     def predict(self, image_id, text, point_groups: list, boxes: list):
         response = requests.post(

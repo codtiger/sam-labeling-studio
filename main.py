@@ -19,7 +19,7 @@ def apply_dark_theme(app):
     # Set base colors
     dark_palette.setColor(QPalette.ColorRole.Base, QColor(42, 42, 42))
     dark_palette.setColor(QPalette.ColorRole.AlternateBase, QColor(66, 66, 66))
-    dark_palette.setColor(QPalette.ColorRole.ToolTipBase, QColor(255, 255, 255))
+    dark_palette.setColor(QPalette.ColorRole.ToolTipBase, QColor(10, 10, 10))
     dark_palette.setColor(QPalette.ColorRole.ToolTipText, QColor(255, 255, 255))
 
     # Set text colors
