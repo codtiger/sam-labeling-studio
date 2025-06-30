@@ -1,5 +1,9 @@
 # sam-labeling-studio
-An annotating software based on Segment Anything Model(SAM) by Meta for semi-automatic labeling. The GUI software supports full manual annotation while giving you the flexibility of BYOM(Bring your own model) access with apis.
+<div align="center">
+  <img src="assets/samstudio.svg" />
+</div>
+An annotation software based on Segment Anything Model(SAM) by Meta for semi-automatic labeling. <br>
+The GUI software supports full manual annotation while giving you the flexibility of BYOM(Bring your own model) access with apis.
 
 > **_Why not CVAT? Label-Studio? Amazon Ground Truth? Scale AI_**?
 

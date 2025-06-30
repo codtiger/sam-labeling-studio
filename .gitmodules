@@ -1,6 +1,3 @@
-[submodule "external/smallest-k-gon"]
-	path = external/smallest-k-gon
-	url = https://github.com/entechlab/smallest-kgon-python
 [submodule "external/smallest-k-gon-python"]
 	path = external/smallest-k-gon-python
-	url = https://github.com/entechlab/smallest-kgon-python
+	url = https://github.com/entechlab/smallest-k-gon-python

@@ -85,7 +85,10 @@ class MainWindow(QMainWindow):
 
         self.status_bar = self.statusBar()
         if self.status_bar:
-            self.status_bar.showMessage("✅ Ready")
+            self.status_label = QLabel(
+                f'<span style="color:#d9534f;vertical-align:middle;"></span>✅Ready'
+            )
+            self.status_bar.addWidget(self.status_label)
 
         self.setFocus()
         config = self.__load__config("configs/app_config.yaml")
@@ -596,16 +599,17 @@ class MainWindow(QMainWindow):
             )
 
     def on_import_selected(self):
-        self.zip_path, _ = QFileDialog.getSaveFileName(
+        self.zip_path, _ = QFileDialog.getOpenFileName(
             self,
             "Select Import File",
             os.curdir,
             "(*.zip)",
             options=QFileDialog.Option.DontUseNativeDialog,
         )
-        self.annotations = coco.import_annotations_from_zip(
-            input_zip_path=self.zip_path, urls=self.urls, dataset_type="Train"
-        )
+        if self.annotations:
+            self.annotations = coco.import_annotations_from_zip(
+                input_zip_path=self.zip_path, urls=self.urls, dataset_type="Train"
+            )
         # TODO: draw on the current image
 
     def show_label_combobox(self):
@@ -760,8 +764,6 @@ class MainWindow(QMainWindow):
 
         self.trigger_prediction.emit(self.embed_id, text, points, boxes)
 
-        # TODO: Change this to something like thread.join() or emitting a signal from thread
-
     def on_model_result(self, candid_polys):
         """Display model results and populate the object list."""
         candid_polys = list(filter(lambda a: a != [], candid_polys))
@@ -829,8 +831,6 @@ class MainWindow(QMainWindow):
 
     def on_object_selected(self, index):
         """Highlight the selected object's polygon."""
-        # TODO: Stop using index to communicate with the ImageView for polys.
-        # Obtain their shape.id from a constructed dict
         if index == -1:
             return
         item = self.object_list.item(index)
@@ -933,13 +933,11 @@ class MainWindow(QMainWindow):
             logger.info(f"Updated settings: {self.settings}")
 
     def show_api_warning(self, message="API connection failed!"):
-        label = QLabel()
-        label.setText(
-            f'<span style="color:#d9534f;vertical-align:middle;">⚠️ {message}</span>'
-        )
-        label.setContentsMargins(0, 0, 8, 0)
         # Clear previous widgets
         if self.status_bar:
-            self.status_bar.clearMessage()
-            self.status_bar.addWidget(label)
-            self.status_bar.show()
+            self.status_label.setText(
+                f'<span style="color:#d9534f;vertical-align:middle;">⚠️ {message}</span>'
+            )
+            self.status_label.setContentsMargins(0, 0, 8, 0)
+            # self.status_bar.clearMessage()
+            # self.status_bar.show()

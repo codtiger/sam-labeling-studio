@@ -1,0 +1,53 @@
+<!-- License: MIT -->
+<svg
+    xmlns="http://www.w3.org/2000/svg"
+    viewBox="0 0 100 115"
+    width="120"
+    height="138"
+    role="img"
+    aria-label="SamStudio – AI-powered annotation software logo"
+>
+  <!-- defs -->
+  <defs>
+    <linearGradient id="grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%"  stop-color="#4FACFF" />
+      <stop offset="100%" stop-color="#976DFF" />
+    </linearGradient>
+    <circle id="node" r="2.5" fill="#976DFF"/>
+  </defs>
+
+  <!-- bounding-box corners -->
+  <g stroke="url(#grad)" stroke-width="4" stroke-linecap="round">
+    <path d="M12 28 V12 H28" />
+    <path d="M72 12 H88 V28" />
+    <path d="M88 72 V88 H72" />
+    <path d="M28 88 H12 V72" />
+  </g>
+
+  <!-- stylised ‘A’ / pen-nib -->
+  <path
+    d="M50 26 L66 70 H60 L54 54 H46 L40 70 H34 L50 26 Z"
+    fill="url(#grad)"
+  />
+
+  <!-- AI circuit nodes -->
+  <g fill="none" stroke="#976DFF" stroke-width="1.5">
+    <path d="M46 54 L30 46" /><use href="#node" x="30" y="46" />
+    <path d="M54 54 L70 46" /><use href="#node" x="70" y="46" />
+    <path d="M50 42 V28"   /><use href="#node" x="50" y="28" />
+  </g>
+
+  <!-- SamStudio label -->
+  <text
+    x="50"
+    y="108"
+    font-size="13"
+    font-family="MesloLGS NF"
+    font-weight="600"
+    text-anchor="middle"
+    fill="url(#grad)"
+  >
+    SamStudio
+  </text>
+</svg>
+

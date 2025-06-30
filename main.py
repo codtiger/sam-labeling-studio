@@ -1,6 +1,7 @@
 import sys
 import os
 from PyQt6.QtCore import QCoreApplication, Qt
+from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import QApplication, QStyle
 from src.ui import MainWindow
 
@@ -55,6 +56,8 @@ def change_title():
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
+    icon = QIcon("assets/samstudio.svg")
+    app.setWindowIcon(icon)
     apply_dark_theme(app)
     window = MainWindow()
     window.setWindowTitle("Sam Labeling Studio")
