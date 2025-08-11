@@ -1,3 +1,4 @@
+from typing import Union
 import json
 import zipfile
 import os
@@ -8,9 +9,10 @@ from ..utils import get_logger
 
 logger = get_logger(__file__)
 
+PathLike = Union[str, Path]
 
 def export_annotations_to_zip(
-    annotations: dict, color_dict: dict, output_zip_path: str, dataset_type: str
+    annotations: dict, color_dict: dict, output_zip_path: PathLike, dataset_type: str
 ):
     """
     Export all saved annotations to a ZIP file in COCO format.
@@ -20,22 +22,20 @@ def export_annotations_to_zip(
     if dataset_type not in ["Train", "Test", "Validation"]:
         logger.error("Invalid dataset type. Must be one of: Train, Test, Validation.")
         return
-
-    # Prepare COCO format data
+    
     coco_data = {
         "images": [],
         "annotations": [],
         "categories": [],
     }
 
-    # Create category mapping
     category_mapping = {label: idx + 1 for idx, label in enumerate(color_dict.keys())}
     for label, idx in category_mapping.items():
         coco_data["categories"].append({"id": idx, "name": label})
 
     annotation_id = 1
     for image_idx, (image_url, annotation) in enumerate(annotations.items()):
-        # Add image metadata
+
         image_name = os.path.basename(image_url)
         coco_data["images"].append(
             {
@@ -44,7 +44,6 @@ def export_annotations_to_zip(
             }
         )
 
-        # Add annotations
         for obj in annotation["objects"]:
             coco_data["annotations"].append(
                 {
@@ -65,15 +64,14 @@ def export_annotations_to_zip(
     with open(json_filename, "w") as f:
         json.dump(coco_data, f, indent=4)
 
-    # Create a ZIP file
-    with zipfile.ZipFile(output_zip_path, "w") as zipf:
+    with zipfile.ZipFile(str(output_zip_path.with_suffix(".zip")), "w") as zipf:
         zipf.write(json_filename, arcname=json_filename)
 
     shutil.rmtree("annotations/")
     logger.info(f"Annotations exported to {output_zip_path}")
 
 
-def import_annotations_from_zip(input_zip_path: str, urls: list, dataset_type: str):
+def import_annotations_from_zip(input_zip_path: PathLike, urls: list, dataset_type: str):
     """
     Import annotations from a ZIP file in COCO format.
     The annotations are expected to be in a folder named 'annotations/' with the filename
@@ -84,19 +82,18 @@ def import_annotations_from_zip(input_zip_path: str, urls: list, dataset_type: s
         logger.error("Invalid dataset type. Must be one of: Train, Test, Validation.")
         return
 
-    # Extract the ZIP file
-    with zipfile.ZipFile(input_zip_path, "r") as zipf:
-        zipf.extractall()
-
-    # Load the COCO JSON file
-    json_filename = f"annotations/instances_{dataset_type}.json"
-    with open(json_filename, "r") as f:
-        coco_data = json.load(f)
-
-    # Create reverse category mapping
+    with zipfile.ZipFile(str(input_zip_path), "r") as zipf:
+        if "annotations/instances_Train.json" in zipf.namelist():
+            with zipf.open(f"annotations/instances_{dataset_type}.json") as f:
+                coco_data = json.load(f)
+        else:
+            logger.error(
+                f"ZIP file does not contain 'annotations/instances_{dataset_type}.json'."
+            )
+            return
+        
     category_mapping = {cat["id"]: cat["name"] for cat in coco_data["categories"]}
 
-    # Map annotations to images
     image_annotations = {img["file_name"]: [] for img in coco_data["images"]}
     for annotation in coco_data["annotations"]:
         image_name = next(
@@ -108,15 +105,20 @@ def import_annotations_from_zip(input_zip_path: str, urls: list, dataset_type: s
             None,
         )
         if image_name:
+            if "segmentation" in annotation and annotation["segmentation"]:
+                polygon = [
+                    [annotation["segmentation"][0][i], annotation["segmentation"][0][i + 1]]
+                    for i in range(0, len(annotation["segmentation"][0]), 2)
+                ]
+            elif "bbox" in annotation:
+                polygon = __bbox_to_polygon(annotation["bbox"])
+            else:
+                polygon = []
             image_annotations[image_name].append(
                 {
                     "id": annotation["id"],
                     "label": category_mapping[annotation["category_id"]],
-                    "polygon": (
-                        __bbox_to_polygon(annotation["bbox"])
-                        if "bbox" in annotation
-                        else []
-                    ),
+                    "polygon": polygon,
                 }
             )
 

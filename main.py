@@ -1,12 +1,15 @@
 import sys
 import os
+import argparse
+import yaml
+
 from PyQt6.QtCore import QCoreApplication, Qt
 from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import QApplication, QStyle
-from src.ui import MainWindow
-
-
 from PyQt6.QtGui import QPalette, QColor
+
+from src.ui import MainWindow
+from src.startup import get_or_create_project
 
 
 def apply_dark_theme(app):
@@ -53,13 +56,27 @@ def change_title():
         except ImportError:
             pass
 
+def parse_args():
+    """Parse command line arguments."""
+    parser = argparse.ArgumentParser(description="Sam Labeling Studio")
+    parser.add_argument(
+        "--config",
+        type=str,
+        default="configs/app_config.yaml",
+        help="Path to the configuration file",
+    )
+    parser.add_argument("--use-native-file-dialog", action="store_true", help="Use native file dialog",default=False)
+    return parser.parse_args()
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
+    app.setApplicationName("Sam Labeling Studio")
+    args = vars(parse_args())
+
     icon = QIcon("assets/samstudio.svg")
     app.setWindowIcon(icon)
     apply_dark_theme(app)
-    window = MainWindow()
+    window = MainWindow(arguments=args)
     window.setWindowTitle("Sam Labeling Studio")
     window.show()
     change_title()

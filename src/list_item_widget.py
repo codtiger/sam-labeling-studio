@@ -47,9 +47,9 @@ class CustomListItemWidget(QtWidgets.QWidget):
         self.verticalLayout.setContentsMargins(1, 1, 0, 0)  # Add some margins
         self.verticalLayout.setObjectName("verticalLayout")
 
-        self.horizontalTopLayout = QtWidgets.QHBoxLayout(self)
+        self.horizontalTopLayout = QtWidgets.QHBoxLayout()
         self.horizontalTopLayout.setContentsMargins(4, 4, 4, 4)  # Add some margins
-        self.horizontalBottomLayout = QtWidgets.QHBoxLayout(self)
+        self.horizontalBottomLayout = QtWidgets.QHBoxLayout()
         self.horizontalBottomLayout.setContentsMargins(0, 0, 0, 0)  # Add some margins
         self.horizontalBottomLayout.setSpacing(5)
         self.horizontalBottomLayout.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)

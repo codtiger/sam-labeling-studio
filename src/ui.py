@@ -65,6 +65,8 @@ from .utils import (
 from .formats import coco
 from src import edit_controls
 
+PathLike = Union[str, Path]
+
 logger = get_logger("Main UI")
 
 
@@ -78,7 +80,7 @@ class MainWindow(QMainWindow):
         str, str, list, list
     )  # image_id, text, points, boxes
 
-    def __init__(self):
+    def __init__(self, parent=None, arguments:dict=dict()):
         super().__init__()
         self.setWindowTitle("Image Annotation Platform")
         self.resize(1920, 1080)
@@ -91,7 +93,7 @@ class MainWindow(QMainWindow):
             self.status_bar.addWidget(self.status_label)
 
         self.setFocus()
-        config = self.__load__config("configs/app_config.yaml")
+        config = self.__load__config(arguments.get("config_path", "configs/app_config.yaml"))
         self.color_dict = read_colors(config["label_colors_file"]) if config else {}
 
         self.edit_hook = EditManager(
@@ -452,7 +454,11 @@ class MainWindow(QMainWindow):
                 action=None, state=None, obj=mask_data
             )
         )
-
+        # additional arguments
+        self.use_native_file_dialog = arguments.get("use_native_file_dialog", True)
+        self.__file_dialog_kwargs__ = {}
+        if not self.use_native_file_dialog:
+            self.__file_dialog_kwargs__["options"] = QFileDialog.Option.DontUseNativeDialog
         # Initiate model
         self.request_url = "http://0.0.0.0:8000/"
         self.model_loaded, self.is_embedded = False, False
@@ -568,7 +574,7 @@ class MainWindow(QMainWindow):
             "Select Images",
             str(self.last_directory),
             "Images (*.png *.jpg)",
-            options=QFileDialog.Option.DontUseNativeDialog,
+            **self.__file_dialog_kwargs__
         )
         self.images = [None] * self.MEMORY_LIMIT
         # if user rushes to select new files or urls, this should be set to None
@@ -591,7 +597,7 @@ class MainWindow(QMainWindow):
             "Select Export Location",
             os.curdir,
             "(*.zip)",
-            options=QFileDialog.Option.DontUseNativeDialog,
+            **self.__file_dialog_kwargs__
         )
         if self.annotations:
             coco.export_annotations_to_zip(
@@ -604,13 +610,16 @@ class MainWindow(QMainWindow):
             "Select Import File",
             os.curdir,
             "(*.zip)",
-            options=QFileDialog.Option.DontUseNativeDialog,
+            **self.__file_dialog_kwargs__
         )
-        if self.annotations:
+        # TODO: What to do with existing annotations?
+        if self.zip_path:
             self.annotations = coco.import_annotations_from_zip(
                 input_zip_path=self.zip_path, urls=self.urls, dataset_type="Train"
             )
-        # TODO: draw on the current image
+            # TODO: draw on the current image
+            self.load_annotations(self.current_idx)
+
 
     def show_label_combobox(self):
         """Show a QComboBox with labels at the mouse position."""
@@ -908,7 +917,7 @@ class MainWindow(QMainWindow):
                     mask_id=obj["id"],
                     points=obj["polygon"],
                     label=obj["label"],
-                    center=obj["center"],
+                    center=obj["center"] if "center" in obj else None,
                 )
                 for obj in anno["objects"]
             ]
