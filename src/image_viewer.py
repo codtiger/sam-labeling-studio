@@ -46,20 +46,31 @@ class VertexItem(QGraphicsEllipseItem):
         super().__init__(x, y, width, height)
         self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemSendsGeometryChanges, True)
         self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemSendsGeometryChanges, True)
-        self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations, True)
-        self.size = 10
+        self.base_pen = QPen(QColor("black"))
+        self.setAcceptHoverEvents(True) 
+        self.base_size = 15
+        self.hovered = False
 
     def paint(self, painter, option, widget=None):
-        """Override the paint method to ensure constant size."""
+        rect = QRectF(-self.base_size / 2, -self.base_size / 2, self.base_size, self.base_size)
         painter.setBrush(self.brush())
-        painter.setPen(self.pen())
-        rect = QRectF(-self.size / 2, -self.size / 2, self.size, self.size)
+        if self.hovered:
+            self.base_pen.setWidth(2)
+        else:
+            painter.setPen(self.base_pen)
         painter.drawEllipse(rect)
 
     def boundingRect(self):
-        """Override boundingRect to match the constant size."""
-        return QRectF(-self.size / 2, -self.size / 2, self.size, self.size)
+        adjusted_size = self.base_size + 2
+        # print (adjusted_size)
+        return QRectF(-adjusted_size / 2, -adjusted_size / 2, adjusted_size, adjusted_size)
 
+    def shape(self):
+        path = QPainterPath()
+        path.addEllipse(QRectF(-self.base_size / 2, -self.base_size / 2, 
+                              self.base_size, self.base_size))
+        return path
+    
     def itemChange(self, change, value):
         if change == QGraphicsItem.GraphicsItemChange.ItemPositionChange and self.data(
             0
@@ -73,6 +84,16 @@ class VertexItem(QGraphicsEllipseItem):
             return new_pos
         return super().itemChange(change, value)
 
+    def hoverEnterEvent(self, event):
+        self.hovered = True
+        self.update()  # trigger repaint
+        super().hoverEnterEvent(event)
+        return super().hoverEnterEvent(event)
+    
+    def hoverLeaveEvent(self, event):
+        self.hovered = False
+        self.update()
+        super().hoverLeaveEvent(event)
 
 class ImageViewer(QGraphicsView):
 
@@ -497,7 +518,8 @@ class ImageViewer(QGraphicsView):
         else:
             if self.dragging_vertex:
                 rect = self.dragging_vertex.rect()
-                self.dragging_vertex.setPos(pos.x() - 10, pos.y() - 10)
+                # self.dragging_vertex.setPos(pos.x() - 10, pos.y() - 10)
+                self.dragging_vertex.setPos(pos.x(), pos.y())
                 self.image_scene.update()
                 # self.dragging_vertex.setVisible(True)
             elif self.is_panning:
