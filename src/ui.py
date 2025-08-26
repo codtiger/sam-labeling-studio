@@ -165,6 +165,7 @@ class MainWindow(QMainWindow):
 
         # Filename label
         self.filename_label = QLabel("No file loaded")
+        self.filename_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         self.filename_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(self.filename_label)
 

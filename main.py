@@ -73,6 +73,9 @@ if __name__ == "__main__":
     app.setApplicationName("Sam Labeling Studio")
     args = vars(parse_args())
 
+    project = get_or_create_project()
+    if not project:
+        sys.exit(0)
     icon = QIcon("assets/samstudio.svg")
     app.setWindowIcon(icon)
     apply_dark_theme(app)
