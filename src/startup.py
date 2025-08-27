@@ -1,7 +1,13 @@
-from .project import StartupDialog, ProjectCreateDialog
+from typing import Optional
 
-def get_or_create_project(parent=None):
+from PyQt6.QtGui import QIcon
+from .project import StartupDialog, ProjectCreateDialog, Project
+
+def get_or_create_project(parent=None, icon:Optional[QIcon]=None) -> Optional[Project]:
     startup_dialog = StartupDialog(parent)
+    if icon:
+        startup_dialog.setWindowIcon(icon)
+        startup_dialog.setWindowTitle("Sam Labeling Studio")
     startup_dialog.exec()
     # select = ProjectSelectDialog(parent)
     # if select.exec():

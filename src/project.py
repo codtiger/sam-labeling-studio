@@ -1,3 +1,4 @@
+from typing import Optional
 import os
 import yaml
 from pathlib import Path
@@ -21,8 +22,10 @@ from PyQt6.QtWidgets import (
     QDialogButtonBox,
 )
 from PyQt6.QtSvgWidgets import QSvgWidget
-from PyQt6.QtGui import QPixmap, QColor
+from PyQt6.QtGui import QPixmap, QColor, QIcon
 from PyQt6.QtCore import Qt
+
+from src.colorpicker import ColorPickerWidget
 
 PROJECTS_DIR = os.path.expanduser("~/.samstudio/projects")
 os.makedirs(PROJECTS_DIR, exist_ok=True)
@@ -88,34 +91,35 @@ class ProjectCreateDialog(QDialog):
         self.setMinimumWidth(400)
         layout = QVBoxLayout(self)
 
-        self.name_edit = QLineEdit()
+        self.name_edit = QLineEdit() 
+        self.name_edit.setFixedWidth(200)
         self.desc_edit = QTextEdit()
         self.thumb_label = QLabel("No thumbnail selected")
         self.thumb_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.thumb_path = ""
         self.loc_edit = QLineEdit()
+        self.loc_edit.setFixedWidth(200)
         self.labels = {}
 
         layout.addWidget(QLabel("Project Name:"))
-        layout.addWidget(self.name_edit)
+        layout.addWidget(self.name_edit, alignment=Qt.AlignmentFlag.AlignLeft, stretch=1)
         layout.addWidget(QLabel("Description:"))
         layout.addWidget(self.desc_edit)
         layout.addWidget(QLabel("Project Thumbnail:"))
         layout.addWidget(self.thumb_label)
-        thumb_btn = QPushButton("Choose Thumbnail")
+        thumb_btn = QPushButton("Browse")
+        thumb_btn.setMaximumSize(200, 50)
         thumb_btn.clicked.connect(self.choose_thumbnail)
-        layout.addWidget(thumb_btn)
+        layout.addWidget(thumb_btn, alignment=Qt.AlignmentFlag.AlignRight)
         layout.addWidget(QLabel("Project Location:"))
-        layout.addWidget(self.loc_edit)
-        loc_btn = QPushButton("Choose Location")
+        layout.addWidget(self.loc_edit, alignment=Qt.AlignmentFlag.AlignLeft, stretch=1)
+        loc_btn = QPushButton("Browse")
         loc_btn.clicked.connect(self.choose_location)
-        layout.addWidget(loc_btn)
+        loc_btn.setMaximumSize(200, 50)
+        layout.addWidget(loc_btn, alignment=Qt.AlignmentFlag.AlignRight)
         layout.addWidget(QLabel("Labels:"))
-        self.label_list = QListWidget()
-        layout.addWidget(self.label_list)
-        add_label_btn = QPushButton("Add Label")
-        add_label_btn.clicked.connect(self.add_label)
-        layout.addWidget(add_label_btn)
+        self.labels_widget = LabelColorWidget(self)
+        layout.addWidget(self.labels_widget)
 
         self.button_box = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
@@ -138,16 +142,6 @@ class ProjectCreateDialog(QDialog):
         if path:
             self.loc_edit.setText(path)
 
-    def add_label(self):
-        dlg = LabelColorDialog(self)
-        if dlg.show():
-            name, color = dlg.get_label()
-            if name and color:
-                self.labels[name] = color
-                item = QListWidgetItem(f"{name} - {color}")
-                item.setBackground(QColor(*color))
-                self.label_list.addItem(item)
-
     def get_project(self):
         return Project(
             self.name_edit.text().strip(),
@@ -157,71 +151,32 @@ class ProjectCreateDialog(QDialog):
             self.labels,
         )
 
-
-# class LabelColorDialog(QDialog):
-#     def __init__(self, parent=None):
-#         super().__init__(parent)
-#         self.setWindowTitle("Add Label")
-#         layout = QHBoxLayout(self)
-#         self.name_edit = QLineEdit()
-#         self.color_btn = QPushButton("Pick Color")
-#         self.plus_btn = QPushButton("+")
-#         self.plus_btn.setFixedWidth(30)
-#         self.plus_btn.clicked.connect(self.add_new_label)
-#         self.color = (255, 255, 255)
-#         self.color_btn.clicked.connect(self.pick_color)
-
-#         self.label_list = QListWidget()
-#         self.plus_btn.setToolTip("Add Label")
-#         self.plus_btn.clicked.connect(self.add_new_label)
-
-#         self.color_dialog = QColorDialog(self)
-#         self.color_dialog.setWindowFlag(Qt.WindowType.Widget)
-#         self.color_dialog.setOptions(QColorDialog.ColorDialogOption.DontUseNativeDialog | QColorDialog.ColorDialogOption.NoButtons)
-#         layout.addWidget(QLabel("Label:"))
-#         layout.addWidget(self.name_edit)
-#         layout.addWidget(self.color_btn)
-#         layout.addWidget(self.plus_btn)
-#         layout.addChildWidget(self.color_dialog)
-#         # layout.addWidget(self.label_list)
-#         self.button_box = QDialogButtonBox(
-#             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
-#         )
-#         self.button_box.accepted.connect(self.accept)
-#         self.button_box.rejected.connect(self.reject)
-#         layout.addWidget(self.button_box)
-
-#     def pick_color(self):
-#         color = self.color_dialog.getColor()
-#         if color.isValid():
-#             self.color = (color.red(), color.green(), color.blue())
-#             self.color_btn.setStyleSheet(f"background-color: rgb{self.color};")
-
-#     def get_label(self):
-#         return self.name_edit.text().strip(), self.color
-    
-#     def add_new_label(self):
-#         if self.name_edit.text().strip():
-#             self.label_list.addItem(f"{self.name_edit.text().strip()} - {self.color}")
 class LabelEditDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Add Label")
         self.setMinimumWidth(300)
         layout = QVBoxLayout(self)
+        self._color_picker = ColorPickerWidget(None)
 
         form_layout = QHBoxLayout()
+
         self.name_edit = QLineEdit()
         self.name_edit.setPlaceholderText("Label name")
-        self.color_picker = QColorDialog(self)
-        self.color_picker.setOptions(
-            QColorDialog.ColorDialogOption.DontUseNativeDialog |
-            QColorDialog.ColorDialogOption.NoButtons
-        )
-        self.color_picker.setFixedWidth(180)
+
+        self.color_edit = QLineEdit()
+        self.color_edit.setPlaceholderText("#ffffff")
+
+        self.color_bttn = QPushButton("")
+        self.color_bttn.setStyleSheet("background-color: blue;")
+        self.color_bttn.clicked.connect(self.show_color_picker)
+        self.color_bttn.mouse
+
         form_layout.addWidget(QLabel("Label:"))
         form_layout.addWidget(self.name_edit)
-        form_layout.addWidget(self.color_picker)
+        form_layout.addWidget(self.color_edit)
+        form_layout.addWidget(self.color_bttn)
+
         layout.addLayout(form_layout)
 
         self.button_box = QDialogButtonBox(
@@ -231,6 +186,15 @@ class LabelEditDialog(QDialog):
         self.button_box.rejected.connect(self.reject)
         layout.addWidget(self.button_box)
 
+    def show_color_picker(self, event):
+        self._color_picker.setWindowFlag(Qt.WindowType.Popup)
+        point = self.cursor().pos()
+        if point.y() - 200 > 0:
+            self._color_picker.move(point.x(), point.y() - 200)
+        else:
+            self._color_picker.move(point.x(), 0)
+        self._color_picker.show()
+
     def get_label(self):
         name = self.name_edit.text().strip()
         color = self.color_picker.currentColor()
@@ -239,10 +203,9 @@ class LabelEditDialog(QDialog):
         rgb = (color.red(), color.green(), color.blue())
         return name, rgb
 
-class LabelColorDialog(QDialog):
+class LabelColorWidget(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Add Labels")
         self.setMinimumWidth(350)
         main_layout = QVBoxLayout(self)
 
@@ -264,22 +227,20 @@ class LabelColorDialog(QDialog):
         main_layout.addWidget(self.label_list)
 
         # Dialog buttons
-        self.button_box = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
-        )
-        main_layout.addWidget(self.button_box)
-
+        # self.button_box = QDialogButtonBox(
+        #     QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        # )
+        # main_layout.addWidget(self.button_box)
+        
         # Connections
         self.add_btn.clicked.connect(self.add_label_dialog)
         self.remove_btn.clicked.connect(self.remove_selected_label)
-        self.button_box.accepted.connect(self.accept)
-        self.button_box.rejected.connect(self.reject)
 
         self.labels = {}
 
     def add_label_dialog(self):
-        dlg = LabelEditDialog(self)
-        if dlg.show():
+        dlg = LabelEditDialog()
+        if dlg.exec():
             name, rgb = dlg.get_label()
             if name and rgb:
                 self.labels[name] = rgb
@@ -306,7 +267,6 @@ class StartupDialog(QDialog):
         self.setWindowTitle("Select Project")
         self.setMinimumWidth(700)
         self.setMinimumHeight(700)
-
         main_layout = QGridLayout(self)
         self.left_panel = QVBoxLayout()
         self.left_panel.setObjectName("left_panel")
@@ -331,17 +291,14 @@ class StartupDialog(QDialog):
 
         self.button_grp.addButton(new_project_bttn)
         self.button_grp.addButton(open_project_bttn)
-        # new_project_bttn.setContentsMargins(-1,-1,-1,0)
-        # open_project_bttn.setContentsMargins(-1,0,-1,-1)
+
         new_project_bttn.clicked.connect(self.show_create_dialog)
         open_project_bttn.clicked.connect(self.show_project_select_dialog)
 
         self.left_panel.addWidget(logo_widget)
-        # self.left_panel.addSpacerItem(QSpacerItem(0, 10))
         self.left_panel.addWidget(new_project_bttn)
         self.left_panel.addWidget(open_project_bttn)
-        # self.left_panel.setSpacing(100)
-        # main_layout.addWidget(QLabel("Welcome to Sam Studio!"), 0, 0, 1, 2)
+
         main_layout.addLayout(self.left_panel, 0, 0, 1, 1)
 
         left_panel = QVBoxLayout()
@@ -369,7 +326,7 @@ class StartupDialog(QDialog):
         separator.setFrameShadow(QFrame.Shadow.Plain)
         separator.setLineWidth(1)
         separator.setStyleSheet("color: #828181;")
-        # separator.setContentsMargins(30,0,10,0)
+
         main_layout.addWidget(separator, 0, 2, 0, 1)
 
         btns = QDialogButtonBox(
@@ -388,7 +345,6 @@ class StartupDialog(QDialog):
 
     def show_create_dialog(self, event):
         dlg = ProjectCreateDialog(self)
-        # dlg.show()
         if dlg.show():
             proj = dlg.get_project()
             proj.save()
