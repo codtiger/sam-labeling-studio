@@ -1,6 +1,5 @@
 from enum import Enum
 
-from PyQt6.QtCore import QPointF
 from src.utils import MaskData
 
 
@@ -15,7 +14,6 @@ class Actions(Enum):
 
 
 class EditManager:
-
     def __init__(
         self,
         set_actions: list[Actions],
@@ -80,4 +78,3 @@ class EditManager:
             )
             self.latest_assigned_ids["mask"] += 1
             return obj_copy
-

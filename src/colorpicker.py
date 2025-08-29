@@ -1,6 +1,7 @@
-from PyQt6.QtWidgets import QWidget, QLabel
-from PyQt6.QtGui import QPainter, QColor, QLinearGradient, QMouseEvent, QPixmap, QFont
+from PyQt6.QtWidgets import QWidget
+from PyQt6.QtGui import QPainter, QColor, QMouseEvent, QPixmap
 from PyQt6.QtCore import Qt, QRect, QPoint, pyqtSignal
+
 
 class ColorPickerWidget(QWidget):
     colorChanged = pyqtSignal(QColor)
@@ -19,7 +20,7 @@ class ColorPickerWidget(QWidget):
         self.bar_height = self.square_size
         self.preview_height = 32
 
-        self.selected_area = 'sv'  # 'sv', 'hue', 'alpha'
+        self.selected_area = "sv"  # 'sv', 'hue', 'alpha'
         self.setMouseTracking(True)
 
         self._sv_pixmap = None
@@ -28,7 +29,7 @@ class ColorPickerWidget(QWidget):
     def getColor(self):
         color = QColor.fromHsvF(self.hue / 359.0, self.sat, self.val, self.alpha)
         return color
-    
+
     def paintEvent(self, event):
         painter = QPainter(self)
         # preview bar
@@ -41,15 +42,27 @@ class ColorPickerWidget(QWidget):
         painter.drawText(preview_rect, Qt.AlignmentFlag.AlignCenter, hex_str)
 
         # SV (saturation-value) square
-        sv_rect = QRect(self.margin, self.preview_height + self.margin, self.square_size, self.square_size)
+        sv_rect = QRect(
+            self.margin, self.preview_height + self.margin, self.square_size, self.square_size
+        )
         self.drawSVRect(painter, sv_rect)
 
         # hue bar
-        hue_rect = QRect(self.margin + self.square_size + self.margin, self.preview_height + self.margin, self.bar_width, self.bar_height)
+        hue_rect = QRect(
+            self.margin + self.square_size + self.margin,
+            self.preview_height + self.margin,
+            self.bar_width,
+            self.bar_height,
+        )
         self.drawHueBar(painter, hue_rect)
 
         # alpha bar
-        alpha_rect = QRect(self.margin + self.square_size + 2 * self.margin + self.bar_width, self.preview_height + self.margin, self.bar_width, self.bar_height)
+        alpha_rect = QRect(
+            self.margin + self.square_size + 2 * self.margin + self.bar_width,
+            self.preview_height + self.margin,
+            self.bar_width,
+            self.bar_height,
+        )
         self.drawAlphaBar(painter, alpha_rect)
 
         # Selectors
@@ -101,7 +114,9 @@ class ColorPickerWidget(QWidget):
         for y in range(rect.top(), rect.bottom(), checker_size):
             for x in range(rect.left(), rect.right(), checker_size):
                 if ((x // checker_size) + (y // checker_size)) % 2 == 0:
-                    painter.fillRect(QRect(x, y, checker_size, checker_size), Qt.GlobalColor.lightGray)
+                    painter.fillRect(
+                        QRect(x, y, checker_size, checker_size), Qt.GlobalColor.lightGray
+                    )
                 else:
                     painter.fillRect(QRect(x, y, checker_size, checker_size), Qt.GlobalColor.white)
         # Draw alpha gradient
@@ -120,23 +135,35 @@ class ColorPickerWidget(QWidget):
 
     def handleMouse(self, event: QMouseEvent):
         x, y = event.position().toPoint().x(), event.position().toPoint().y()
-        sv_rect = QRect(self.margin, self.preview_height + self.margin, self.square_size, self.square_size)
-        hue_rect = QRect(self.margin + self.square_size + self.margin, self.preview_height + self.margin, self.bar_width, self.bar_height)
-        alpha_rect = QRect(self.margin + self.square_size + 2 * self.margin + self.bar_width, self.preview_height + self.margin, self.bar_width, self.bar_height)
+        sv_rect = QRect(
+            self.margin, self.preview_height + self.margin, self.square_size, self.square_size
+        )
+        hue_rect = QRect(
+            self.margin + self.square_size + self.margin,
+            self.preview_height + self.margin,
+            self.bar_width,
+            self.bar_height,
+        )
+        alpha_rect = QRect(
+            self.margin + self.square_size + 2 * self.margin + self.bar_width,
+            self.preview_height + self.margin,
+            self.bar_width,
+            self.bar_height,
+        )
 
         if sv_rect.contains(x, y):
-            self.selected_area = 'sv'
+            self.selected_area = "sv"
             self.sat = min(max((x - sv_rect.left()) / (sv_rect.width() - 1), 0), 1)
             self.val = 1 - min(max((y - sv_rect.top()) / (sv_rect.height() - 1), 0), 1)
             self.colorChanged.emit(self.getColor())
             self.update()
         elif hue_rect.contains(x, y):
-            self.selected_area = 'hue'
+            self.selected_area = "hue"
             self.hue = min(max(359 * (1 - (y - hue_rect.top()) / (hue_rect.height() - 1)), 0), 359)
             self.colorChanged.emit(self.getColor())
             self.update()
         elif alpha_rect.contains(x, y):
-            self.selected_area = 'alpha'
+            self.selected_area = "alpha"
             self.alpha = min(max(1 - (y - alpha_rect.top()) / (alpha_rect.height() - 1), 0), 1)
             self.colorChanged.emit(self.getColor())
             self.update()

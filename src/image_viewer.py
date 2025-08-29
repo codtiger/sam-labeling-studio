@@ -30,7 +30,6 @@ from PyQt6.QtGui import (
     QWheelEvent,
     QPainterPath,
 )
-import numpy as np
 
 
 from .utils import is_inside_rect, ControlItem, ModelPrompts, MaskData, get_logger
@@ -47,7 +46,7 @@ class VertexItem(QGraphicsEllipseItem):
         self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemSendsGeometryChanges, True)
         self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemSendsGeometryChanges, True)
         self.base_pen = QPen(QColor("black"))
-        self.setAcceptHoverEvents(True) 
+        self.setAcceptHoverEvents(True)
         self.base_size = 15
         self.hovered = False
 
@@ -67,14 +66,13 @@ class VertexItem(QGraphicsEllipseItem):
 
     def shape(self):
         path = QPainterPath()
-        path.addEllipse(QRectF(-self.base_size / 2, -self.base_size / 2, 
-                              self.base_size, self.base_size))
+        path.addEllipse(
+            QRectF(-self.base_size / 2, -self.base_size / 2, self.base_size, self.base_size)
+        )
         return path
-    
+
     def itemChange(self, change, value):
-        if change == QGraphicsItem.GraphicsItemChange.ItemPositionChange and self.data(
-            0
-        ):
+        if change == QGraphicsItem.GraphicsItemChange.ItemPositionChange and self.data(0):
             new_pos = value
             polygon_item = self.data(0)
             index = self.data(1)
@@ -89,14 +87,14 @@ class VertexItem(QGraphicsEllipseItem):
         self.update()  # trigger repaint
         super().hoverEnterEvent(event)
         return super().hoverEnterEvent(event)
-    
+
     def hoverLeaveEvent(self, event):
         self.hovered = False
         self.update()
         super().hoverLeaveEvent(event)
 
-class ImageViewer(QGraphicsView):
 
+class ImageViewer(QGraphicsView):
     object_added = pyqtSignal(MaskData)
     control_change = pyqtSignal(ControlItem)
     object_selected = pyqtSignal(
@@ -117,6 +115,7 @@ class ImageViewer(QGraphicsView):
         super().__init__()
         self.image_scene = QGraphicsScene()
         self.setScene(self.image_scene)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
 
         self.object_lock = QReadWriteLock()
 
@@ -150,9 +149,13 @@ class ImageViewer(QGraphicsView):
         self.current_prompt_color = ImageViewer.COLOR_CYCLE[0]
 
         self.dragging_vertex = None
+        self.dragging_polygon: Optional[QGraphicsPolygonItem] = None
         self.last_pan_pos = None
         self.start_roi_pos = QPoint()
         self.start_box_pos = QPoint()
+
+        # Keyboards keys
+        self.key_control_pressed = False
 
         self.is_panning = False
         self.is_selecting_roi = False
@@ -412,9 +415,11 @@ class ImageViewer(QGraphicsView):
                 vertex_item.setBrush(QBrush(QColor(*self.color_dict[item.data(1)])))
         self.object_lock.unlock()
 
+    
     def mousePressEvent(self, event):
         """Handle mouse press for point or box annotation."""
         pos = self.mapToScene(event.pos())
+        self.setFocus()
         if (
             event.button() == Qt.MouseButton.LeftButton
             and self.mode == "manual"
@@ -427,6 +432,9 @@ class ImageViewer(QGraphicsView):
                 if isinstance(item, VertexItem):
                     self.is_panning = False
                     self.dragging_vertex = item
+                elif isinstance(item, QGraphicsPolygonItem) and self.key_control_pressed:
+                    print ("?")
+                    self.dragging_polygon = item
                 # Moving the image around if no scrollbar
                 elif self.transform().m11() <= 1:
                     self.is_panning = True
@@ -476,12 +484,8 @@ class ImageViewer(QGraphicsView):
                         QPen(Qt.GlobalColor.yellow),
                         QBrush(self.current_prompt_color),
                     )
-                    star_item.setFlag(
-                        QGraphicsItem.GraphicsItemFlag.ItemSendsGeometryChanges, True
-                    )
-                    star_item.setFlag(
-                        QGraphicsItem.GraphicsItemFlag.ItemSendsGeometryChanges, True
-                    )
+                    star_item.setFlag(QGraphicsItem.GraphicsItemFlag.ItemSendsGeometryChanges, True)
+                    star_item.setFlag(QGraphicsItem.GraphicsItemFlag.ItemSendsGeometryChanges, True)
                     self.prompt_stars.append(star_item)
                 elif self.prompt_mode == ModelPrompts.BOX:
                     self.is_prompt_box = True
@@ -516,6 +520,15 @@ class ImageViewer(QGraphicsView):
                 brush=QBrush(QColor(*self.color_dict[self.__last_label__] + (50,))),
             )
         else:
+            if self.dragging_polygon:
+                new_center = pos
+                old_center = self.dragging_polygon.boundingRect().center()
+                self.dragging_polygon.setPos(new_center - old_center)
+                vertices: list[VertexItem] = self.dragging_polygon.data(2)
+                for v in vertices:
+                    v.setPos(v.pos() + (new_center - old_center))
+                self.image_scene.update()
+                
             if self.dragging_vertex:
                 rect = self.dragging_vertex.rect()
                 # self.dragging_vertex.setPos(pos.x() - 10, pos.y() - 10)
@@ -577,6 +590,9 @@ class ImageViewer(QGraphicsView):
             if self.dragging_vertex:
                 self.dragging_vertex = None
                 self.current_control = ControlItem.NORMAL
+            elif self.dragging_polygon:
+                self.dragging_polygon = None
+                self.current_control = ControlItem.NORMAL
             elif self.is_panning:
                 self.setFocus()
                 self.is_panning = False
@@ -611,9 +627,7 @@ class ImageViewer(QGraphicsView):
                 )
                 pen = QPen(QColor.fromRgb(220, 12, 12))
                 pen.setWidth(5)
-                rect = self.image_scene.addRect(
-                    QRectF(top_left, bottom_right).normalized(), pen=pen
-                )
+                rect = self.image_scene.addRect(QRectF(top_left, bottom_right).normalized(), pen=pen)
                 self.prompt_boxes.append(rect)
                 self.is_prompt_box = False
                 self.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)
@@ -710,10 +724,7 @@ class ImageViewer(QGraphicsView):
         if self.mode == "manual":
             # Finalize current temp_poly, and add it to objects
             if event.key() == Qt.Key.Key_N:
-                if (
-                    self.prev_shape is not None
-                    and self.current_control == ControlItem.NORMAL
-                ):
+                if self.prev_shape is not None and self.current_control == ControlItem.NORMAL:
                     self.current_control = self.prev_shape
                     self.control_change.emit(self.current_control)
                     self.setCursor(Qt.CursorShape.CrossCursor)
@@ -762,12 +773,8 @@ class ImageViewer(QGraphicsView):
                     for i, point in enumerate(final_poly):
                         vertex_item = VertexItem(0, 0, 15, 15)
                         vertex_item.setPos(point.x(), point.y())
-                        vertex_item.setBrush(
-                            QBrush(QColor(*self.color_dict[self.__last_label__]))
-                        )
-                        vertex_item.setFlag(
-                            QGraphicsItem.GraphicsItemFlag.ItemIsMovable
-                        )
+                        vertex_item.setBrush(QBrush(QColor(*self.color_dict[self.__last_label__])))
+                        vertex_item.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable)
                         vertex_item.setData(0, polygon_item)
                         vertex_item.setData(1, i)
                         self.image_scene.addItem(vertex_item)
@@ -791,10 +798,12 @@ class ImageViewer(QGraphicsView):
                     self.temp_points = []
                     self.temp_ellipses = []
 
+            elif event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+                self.key_control_pressed = True
                 # return to NORMAL mode
-                self.current_control = ControlItem.NORMAL
-                self.control_change.emit(ControlItem.NORMAL)
-                self.setCursor(Qt.CursorShape.ArrowCursor)
+            self.current_control = ControlItem.NORMAL
+            self.control_change.emit(ControlItem.NORMAL)
+            self.setCursor(Qt.CursorShape.ArrowCursor)
         if self.mode == "model":
             if event.key() == Qt.Key.Key_N:
                 self.prompt_star_coords.append([])
@@ -803,12 +812,17 @@ class ImageViewer(QGraphicsView):
                     if self.num_prompt_objs + 1 < len(ImageViewer.COLOR_CYCLE)
                     else 0
                 )
-                self.current_prompt_color = ImageViewer.COLOR_CYCLE[
-                    self.num_prompt_objs
-                ]
+                self.current_prompt_color = ImageViewer.COLOR_CYCLE[self.num_prompt_objs]
 
         return super().keyPressEvent(event)
+    
+    def keyReleaseEvent(self, event):
+        if event.key() == Qt.Key.Key_Control:
+            self.key_control_pressed = False
+            self.dragging_polygon = None
 
+        return super().keyReleaseEvent(event)
+    
     def resetView(self, event):
         """Adjust image scaling dynamically when the window is resized."""
         super().resizeEvent(event)

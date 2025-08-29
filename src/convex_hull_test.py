@@ -1,5 +1,3 @@
-import io
-
 from models.sam2.build_sam import build_sam2
 from models.sam2.sam2_image_predictor import SAM2ImagePredictor
 import cv2
@@ -73,7 +71,6 @@ def run_benchmark(preds):
 
 
 if __name__ == "__main__":
-
     points = []
 
     def click_event(event, x, y, flags, param):
@@ -98,11 +95,7 @@ if __name__ == "__main__":
                         cv2.line(
                             image_display,
                             tuple(reversed(hull[i].astype(np.int32).tolist())),
-                            tuple(
-                                reversed(
-                                    hull[(i + 1) % len(hull)].astype(np.int32).tolist()
-                                )
-                            ),
+                            tuple(reversed(hull[(i + 1) % len(hull)].astype(np.int32).tolist())),
                             (0, 255, 0),
                             2,
                         )
@@ -117,4 +110,3 @@ if __name__ == "__main__":
     print("Left click to select points, right click to process.")
     cv2.waitKey(0)
     cv2.destroyAllWindows()
-

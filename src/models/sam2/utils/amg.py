@@ -23,15 +23,15 @@ class MaskData:
 
     def __init__(self, **kwargs) -> None:
         for v in kwargs.values():
-            assert isinstance(
-                v, (list, np.ndarray, torch.Tensor)
-            ), "MaskData only supports list, numpy arrays, and torch tensors."
+            assert isinstance(v, (list, np.ndarray, torch.Tensor)), (
+                "MaskData only supports list, numpy arrays, and torch tensors."
+            )
         self._stats = dict(**kwargs)
 
     def __setitem__(self, key: str, item: Any) -> None:
-        assert isinstance(
-            item, (list, np.ndarray, torch.Tensor)
-        ), "MaskData only supports list, numpy arrays, and torch tensors."
+        assert isinstance(item, (list, np.ndarray, torch.Tensor)), (
+            "MaskData only supports list, numpy arrays, and torch tensors."
+        )
         self._stats[key] = item
 
     def __delitem__(self, key: str) -> None:
@@ -98,9 +98,9 @@ def box_xyxy_to_xywh(box_xyxy: torch.Tensor) -> torch.Tensor:
 
 
 def batch_iterator(batch_size: int, *args) -> Generator[List[Any], None, None]:
-    assert len(args) > 0 and all(
-        len(a) == len(args[0]) for a in args
-    ), "Batched iteration must have inputs of all the same size."
+    assert len(args) > 0 and all(len(a) == len(args[0]) for a in args), (
+        "Batched iteration must have inputs of all the same size."
+    )
     n_batches = len(args[0]) // batch_size + int(len(args[0]) % batch_size != 0)
     for b in range(n_batches):
         yield [arg[b * batch_size : (b + 1) * batch_size] for arg in args]
@@ -254,9 +254,7 @@ def uncrop_points(points: torch.Tensor, crop_box: List[int]) -> torch.Tensor:
     return points + offset
 
 
-def uncrop_masks(
-    masks: torch.Tensor, crop_box: List[int], orig_h: int, orig_w: int
-) -> torch.Tensor:
+def uncrop_masks(masks: torch.Tensor, crop_box: List[int], orig_h: int, orig_w: int) -> torch.Tensor:
     x0, y0, x1, y1 = crop_box
     if x0 == 0 and y0 == 0 and x1 == orig_w and y1 == orig_h:
         return masks
@@ -266,9 +264,7 @@ def uncrop_masks(
     return torch.nn.functional.pad(masks, pad, value=0)
 
 
-def remove_small_regions(
-    mask: np.ndarray, area_thresh: float, mode: str
-) -> Tuple[np.ndarray, bool]:
+def remove_small_regions(mask: np.ndarray, area_thresh: float, mode: str) -> Tuple[np.ndarray, bool]:
     """
     Removes small disconnected regions and holes in a mask. Returns the
     mask and an indicator of if the mask has been modified.

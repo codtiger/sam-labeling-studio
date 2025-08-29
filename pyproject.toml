@@ -20,6 +20,7 @@ dependencies = [
 "requests==2.28.0",
 "pydantic",
 "fastapi",
+"python-multipart",
 "aiohttp",
 "smallest_kgon @ git+https://github.com/entechlab/smallest-k-gon-python.git",
 
@@ -34,4 +35,16 @@ dependencies = [
 
 [project.urls]
 Homepage = "https://github.com/entechlab/sam-labeling-studio"
+
+[dependency-groups]
+dev = [
+    "ruff>=0.12.10",
+]
+
+[tool.ruff]
+line-length = 102
+
+[tool.ruff.lint]
+# line too long
+extend-select = ["E501"]
 

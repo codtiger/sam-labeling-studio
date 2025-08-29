@@ -4,9 +4,9 @@ from typing import Optional
 import os
 from dataclasses import dataclass
 
-from PyQt6.QtGui import QImage, QColor, QStyleHints, QIcon, QPixmap, QPainter
+from PyQt6.QtGui import QColor, QIcon, QPixmap, QPainter
 from PyQt6.QtCore import QRectF, Qt, QSize, QRect, QPoint
-from PIL import Image, ImageQt
+from PIL import ImageQt
 from PyQt6.QtWidgets import QStyledItemDelegate, QStyle
 
 from PyQt6.QtSvg import QSvgRenderer
@@ -171,18 +171,12 @@ def svg_to_icon(svg_string, size):
 def is_inside_rect(rect: QRectF, point: QPoint):
     rect_coords = rect.getCoords()
     x, y = point.x(), point.y()
-    if (
-        (x < rect_coords[0])
-        or (x > rect_coords[2])
-        or (y < rect_coords[1])
-        or (y > rect_coords[3])
-    ):
+    if (x < rect_coords[0]) or (x > rect_coords[2]) or (y < rect_coords[1]) or (y > rect_coords[3]):
         return False
     return True
 
 
 def get_convex_hull(pred_img: np.ndarray, bg_value: int = 0, k=6) -> np.ndarray:
-
     pred_cumsum = pred_img[pred_img.any(1)].cumsum(axis=1)
     start_y = pred_img[pred_img.any(1)].argmax(axis=1)
     end_y = pred_cumsum.argmax(axis=1)

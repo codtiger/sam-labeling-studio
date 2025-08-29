@@ -11,6 +11,7 @@ logger = get_logger(__file__)
 
 PathLike = Union[str, Path]
 
+
 def export_annotations_to_zip(
     annotations: dict, color_dict: dict, output_zip_path: PathLike, dataset_type: str
 ):
@@ -22,7 +23,7 @@ def export_annotations_to_zip(
     if dataset_type not in ["Train", "Test", "Validation"]:
         logger.error("Invalid dataset type. Must be one of: Train, Test, Validation.")
         return
-    
+
     coco_data = {
         "images": [],
         "annotations": [],
@@ -35,7 +36,6 @@ def export_annotations_to_zip(
 
     annotation_id = 1
     for image_idx, (image_url, annotation) in enumerate(annotations.items()):
-
         image_name = os.path.basename(image_url)
         coco_data["images"].append(
             {
@@ -64,6 +64,7 @@ def export_annotations_to_zip(
     with open(json_filename, "w") as f:
         json.dump(coco_data, f, indent=4)
 
+    output_zip_path = Path(output_zip_path)
     with zipfile.ZipFile(str(output_zip_path.with_suffix(".zip")), "w") as zipf:
         zipf.write(json_filename, arcname=json_filename)
 
@@ -87,21 +88,15 @@ def import_annotations_from_zip(input_zip_path: PathLike, urls: list, dataset_ty
             with zipf.open(f"annotations/instances_{dataset_type}.json") as f:
                 coco_data = json.load(f)
         else:
-            logger.error(
-                f"ZIP file does not contain 'annotations/instances_{dataset_type}.json'."
-            )
+            logger.error(f"ZIP file does not contain 'annotations/instances_{dataset_type}.json'.")
             return
-        
+
     category_mapping = {cat["id"]: cat["name"] for cat in coco_data["categories"]}
 
     image_annotations = {img["file_name"]: [] for img in coco_data["images"]}
     for annotation in coco_data["annotations"]:
         image_name = next(
-            (
-                img["file_name"]
-                for img in coco_data["images"]
-                if img["id"] == annotation["image_id"]
-            ),
+            (img["file_name"] for img in coco_data["images"] if img["id"] == annotation["image_id"]),
             None,
         )
         if image_name:

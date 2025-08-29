@@ -189,9 +189,7 @@ def sample_box_points(
         box_noise = box_noise * torch.stack((max_dx, max_dy, max_dx, max_dy), dim=-1)
 
         box_coords = box_coords + box_noise
-        img_bounds = (
-            torch.tensor([W, H, W, H], device=device) - 1
-        )  # uncentered pixel coords
+        img_bounds = torch.tensor([W, H, W, H], device=device) - 1  # uncentered pixel coords
         box_coords.clamp_(torch.zeros_like(img_bounds), img_bounds)  # In place clamping
 
     box_coords = box_coords.reshape(-1, 2, 2)  # always 2 points

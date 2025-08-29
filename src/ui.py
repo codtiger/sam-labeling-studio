@@ -3,9 +3,7 @@ from functools import partial
 from pathlib import Path
 import io
 import os
-from PyQt6 import QtWidgets
 import yaml
-import requests
 
 from PyQt6.QtWidgets import (
     QMainWindow,
@@ -28,28 +26,25 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import (
     Qt,
-    QSize,
     QPoint,
     QThread,
     pyqtSignal,
 )
 from PIL import Image
 from PyQt6.QtGui import (
-    QCursor,
     QKeySequence,
     QPixmap,
     QIcon,
     QAction,
     QColor,
     QKeyEvent,
-    QBrush,
 )
 
 from .image_viewer import ImageViewer
 from .list_item_widget import CustomListItemWidget
 from .threads import AsyncRemoteImageLoader, LocalImageLoader
 from .sam_thread import RequestWorker
-from .edit_controls import Actions, EditManager
+from .edit_controls import EditManager
 from .extra_dialogs import PreferencesDialog
 from .utils import (
     pil_to_qimage,
@@ -63,7 +58,6 @@ from .utils import (
     MaskData,
 )
 from .formats import coco
-from src import edit_controls
 
 PathLike = Union[str, Path]
 
@@ -71,16 +65,14 @@ logger = get_logger("Main UI")
 
 
 class MainWindow(QMainWindow):
-
     MEMORY_LIMIT = 200  # in megabytes
     MAX_PARALLEL_REQUESTS = 10
 
     trigger_embbeding = pyqtSignal(bytes)
-    trigger_prediction = pyqtSignal(
-        str, str, list, list
-    )  # image_id, text, points, boxes
+    trigger_prediction = pyqtSignal(str, str, list, list)  # image_id, text, points, boxes
+    trigger_check_connection = pyqtSignal()
 
-    def __init__(self, parent=None, arguments:dict=dict()):
+    def __init__(self, parent=None, arguments: dict = dict()):
         super().__init__()
         self.setWindowTitle("Image Annotation Platform")
         self.resize(1920, 1080)
@@ -88,7 +80,7 @@ class MainWindow(QMainWindow):
         self.status_bar = self.statusBar()
         if self.status_bar:
             self.status_label = QLabel(
-                f'<span style="color:#d9534f;vertical-align:middle;"></span>✅Ready'
+                ''
             )
             self.status_bar.addWidget(self.status_label)
 
@@ -96,16 +88,12 @@ class MainWindow(QMainWindow):
         config = self.__load__config(arguments.get("config_path", "configs/app_config.yaml"))
         self.color_dict = read_colors(config["label_colors_file"]) if config else {}
 
-        self.edit_hook = EditManager(
-            set_actions=[], state_dict={}, latest_assigned_ids={"mask": 0}
-        )
+        self.edit_hook = EditManager(set_actions=[], state_dict={}, latest_assigned_ids={"mask": 0})
         # Central widget with vertical layout
         central_widget = QWidget()
         layout = QVBoxLayout()
 
-        self.last_directory = (
-            os.environ["HOME"] + "/" + config["last_directory"] if config else ""
-        )
+        self.last_directory = os.environ["HOME"] + "/" + config["last_directory"] if config else ""
         # Mode selection radio buttons
         mode_layout = QHBoxLayout()
         self.model_mode_radio = QRadioButton("Point/Mask Selection (Model)")
@@ -413,9 +401,7 @@ class MainWindow(QMainWindow):
 
             self.undo_action = QAction("Undo", self)
             self.undo_action.setIcon(QIcon("assets/undo.svg"))
-            self.undo_action.setShortcut(
-                QKeySequence(Qt.Key.Key_Control + Qt.Key.Key_R)
-            )
+            self.undo_action.setShortcut(QKeySequence(Qt.Key.Key_Control + Qt.Key.Key_R))
             self.redo_action = QAction("Redo", self)
             self.redo_action.setIcon(QIcon("assets/redo.svg"))
             self.undo_action.setShortcut(
@@ -428,7 +414,9 @@ class MainWindow(QMainWindow):
 
             self.refresh_connection_action = QAction("Refresh", self)
             self.refresh_connection_action.setIcon(QIcon("assets/refresh_api.svg"))
+            self.refresh_connection_action.triggered.connect(self.refresh_connection)
             self.toolbar.addAction(self.refresh_connection_action)
+
 
         # async loader
         self.async_remote_loader = None
@@ -451,9 +439,7 @@ class MainWindow(QMainWindow):
         self.image_viewer.object_added.connect(self.add_to_object_list)
         self.image_viewer.control_change.connect(self.set_control)
         self.image_viewer.object_selected.connect(
-            lambda mask_data: self.edit_hook.update_state(
-                action=None, state=None, obj=mask_data
-            )
+            lambda mask_data: self.edit_hook.update_state(action=None, state=None, obj=mask_data)
         )
         # additional arguments
         self.use_native_file_dialog = arguments.get("use_native_file_dialog", True)
@@ -475,11 +461,14 @@ class MainWindow(QMainWindow):
         self.model_worker.image_embedded.connect(self.on_image_embedded)
         self.model_worker.prediction_ready.connect(self.on_model_result)
         self.model_worker.connection_failed.connect(self.show_api_warning)
+        self.model_worker.connection_ok.connect(self.show_api_ok)
 
+        self.trigger_check_connection.connect(self.model_worker.check_connection)
         self.trigger_embbeding.connect(self.model_worker.post_image)
         self.trigger_prediction.connect(self.model_worker.predict)
 
-        # self.model_thread.start()
+        self.trigger_check_connection.emit()
+        self.model_thread.start()
 
     def on_model_ready(self):
         logger.warning("MODEL LOADED")
@@ -491,12 +480,11 @@ class MainWindow(QMainWindow):
         self.is_embedded = True
 
     def __load__config(self, yaml_path):
-
         with open(yaml_path, "r") as stream:
             try:
                 config_dict = yaml.safe_load(stream)
                 return config_dict
-            except yaml.YAMLError as exc:
+            except yaml.YAMLError:
                 self.close()
 
     def update_mode(self):
@@ -560,8 +548,7 @@ class MainWindow(QMainWindow):
                 self.slider.setValue(self.current_idx)
                 self.update_filename_label()
                 if (
-                    self.loader_thread is not None
-                    and self.async_remote_loader is not None
+                    self.loader_thread is not None and self.async_remote_loader is not None
                 ) and self.loader_thread.isRunning():
                     self.async_remote_loader.stop()
                     self.loader_thread.quit()
@@ -575,7 +562,7 @@ class MainWindow(QMainWindow):
             "Select Images",
             str(self.last_directory),
             "Images (*.png *.jpg)",
-            **self.__file_dialog_kwargs__
+            **self.__file_dialog_kwargs__,
         )
         self.images = [None] * self.MEMORY_LIMIT
         # if user rushes to select new files or urls, this should be set to None
@@ -594,24 +581,14 @@ class MainWindow(QMainWindow):
 
     def on_export_selected(self):
         self.save_path, _ = QFileDialog.getSaveFileName(
-            self,
-            "Select Export Location",
-            os.curdir,
-            "(*.zip)",
-            **self.__file_dialog_kwargs__
+            self, "Select Export Location", os.curdir, "(*.zip)", **self.__file_dialog_kwargs__
         )
         if self.annotations:
-            coco.export_annotations_to_zip(
-                self.annotations, self.color_dict, self.save_path, "Train"
-            )
+            coco.export_annotations_to_zip(self.annotations, self.color_dict, self.save_path, "Train")
 
     def on_import_selected(self):
         self.zip_path, _ = QFileDialog.getOpenFileName(
-            self,
-            "Select Import File",
-            os.curdir,
-            "(*.zip)",
-            **self.__file_dialog_kwargs__
+            self, "Select Import File", os.curdir, "(*.zip)", **self.__file_dialog_kwargs__
         )
         # TODO: What to do with existing annotations?
         if self.zip_path:
@@ -620,7 +597,6 @@ class MainWindow(QMainWindow):
             )
             # TODO: draw on the current image
             self.load_annotations(self.current_idx)
-
 
     def show_label_combobox(self):
         """Show a QComboBox with labels at the mouse position."""
@@ -633,9 +609,7 @@ class MainWindow(QMainWindow):
         mouse_pos = self.mapFromGlobal(QPoint(self.cursor().pos()))
         combo.move(mouse_pos - QPoint(0, combo.height() + 5))  # 5px above mouse
         combo.showPopup()  # Show dropdown immediately
-        combo.activated.connect(
-            lambda _: self.image_viewer.set_last_label(combo.currentText())
-        )
+        combo.activated.connect(lambda _: self.image_viewer.set_last_label(combo.currentText()))
 
     def load_image_from_url(self, urls):
         """Start a thread to load an image from a URL."""
@@ -683,7 +657,8 @@ class MainWindow(QMainWindow):
         # Load the embedding
         # if self.model_loaded:
         #   self.trigger_embbeding.emit(image)
-        self.model_thread.start()
+        if not self.model_thread.started:
+            self.model_thread.start()
         self.trigger_embbeding.emit(image)
         self.prev_selected_obj_idx = None
 
@@ -696,12 +671,8 @@ class MainWindow(QMainWindow):
             # reset run_model action until embedding calculated
             self.run_model_action.setEnabled(False)
 
-            if (self.current_idx >= self.start_idx) and (
-                self.current_idx < self.end_idx
-            ):
-                self.load_viewer(
-                    self.images[self.current_idx % MainWindow.MEMORY_LIMIT]
-                )
+            if (self.current_idx >= self.start_idx) and (self.current_idx < self.end_idx):
+                self.load_viewer(self.images[self.current_idx % MainWindow.MEMORY_LIMIT])
             elif self.current_idx >= self.end_idx:
                 self.start_idx, self.end_idx = (
                     self.current_idx,
@@ -790,9 +761,7 @@ class MainWindow(QMainWindow):
         self.object_list.takeItem(self.object_list.row(item))
 
     def change_object_label(self, item: QListWidgetItem, label_text):
-        self.image_viewer.changePolygonLabel(
-            item.data(Qt.ItemDataRole.UserRole).id, label_text
-        )
+        self.image_viewer.changePolygonLabel(item.data(Qt.ItemDataRole.UserRole).id, label_text)
         if item:
             item.data(Qt.ItemDataRole.UserRole).label = label_text
             item.setBackground(QColor(*self.color_dict[label_text] + (50,)))
@@ -833,9 +802,7 @@ class MainWindow(QMainWindow):
             candidate_polys: List[List[int]]
                 List of candidate polgons for one object. 1 number of objets and C number of candidates each having k number of vertices : 1xCxk
         """
-        object_item = self.add_to_object_list(
-            mask_obj, total_candidates=len(candidate_polys)
-        )
+        object_item = self.add_to_object_list(mask_obj, total_candidates=len(candidate_polys))
         self.id_to_candids[mask_obj.id] = candidate_polys
         object_item.candidate_changed.connect(self.on_candidate_changed)
 
@@ -848,9 +815,7 @@ class MainWindow(QMainWindow):
             if self.prev_selected_obj_idx is not None:
                 prev_item = self.object_list.item(self.prev_selected_obj_idx)
                 if prev_item:
-                    self.image_viewer.unhighlight_polygon(
-                        prev_item.data(Qt.ItemDataRole.UserRole).id
-                    )
+                    self.image_viewer.unhighlight_polygon(prev_item.data(Qt.ItemDataRole.UserRole).id)
             self.image_viewer.highlight_polygon(item.data(Qt.ItemDataRole.UserRole).id)
             item.setForeground(QColor("Blue"))
             self.prev_selected_obj_idx = index
@@ -888,9 +853,7 @@ class MainWindow(QMainWindow):
         objects = []
         image_url = self.urls[self.current_idx]
         for i in range(self.object_list.count()):
-            logger.debug(
-                f"Number of objects in object_list: {self.object_list.count()}"
-            )
+            logger.debug(f"Number of objects in object_list: {self.object_list.count()}")
             row = self.object_list.item(i)
             if row:
                 # id = row.data(Qt.ItemDataRole.UserRole)
@@ -942,6 +905,11 @@ class MainWindow(QMainWindow):
             # Optionally, apply settings immediately or save to config
             logger.info(f"Updated settings: {self.settings}")
 
+    def show_api_ok(self, message="Ready"):
+        self.status_label.setText(
+                f'<span style="color:#d9534f;vertical-align:middle;"></span>✅{message}'
+            )
+    
     def show_api_warning(self, message="API connection failed!"):
         # Clear previous widgets
         if self.status_bar:
@@ -951,3 +919,16 @@ class MainWindow(QMainWindow):
             self.status_label.setContentsMargins(0, 0, 8, 0)
             # self.status_bar.clearMessage()
             # self.status_bar.show()
+
+    # ----- Toolbar action slots ------------ #
+    def refresh_connection(self):
+        if hasattr(self, "model_worker"):
+            self.status_label.setText('<span style="color:#1E90FF;">🔄 Checking API connection...</span>')
+            self.trigger_check_connection.emit()
+            if self.current_image is not None and self.image_viewer.isEnabled():
+                self.trigger_embbeding()
+
+    def close(self):
+        if self.model_thread.isRunning:
+            self.model_thread.exit()
+        return super().close()

@@ -1,7 +1,4 @@
-from PyQt6.QtCore import QObject, QThread, pyqtSignal, QWaitCondition, QMutex
-import requests
-from PIL import Image
-from io import BytesIO
+from PyQt6.QtCore import QObject, QThread, pyqtSignal, QMutex
 
 import aiohttp
 import asyncio
@@ -100,7 +97,6 @@ class LocalImageLoader(QThread):
         self.image_loaded.emit(self.image_list[0])
         self.mutex.lock()
         for idx in range(1, len(self.paths)):
-
             with open(self.paths[idx], "rb") as f:
                 self.image_list[idx] = f.read()
         # self.condition.wait(self.mutex)
