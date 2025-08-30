@@ -38,6 +38,7 @@ from PyQt6.QtGui import (
     QAction,
     QColor,
     QKeyEvent,
+    QIntValidator
 )
 
 from .image_viewer import ImageViewer
@@ -74,7 +75,7 @@ class MainWindow(QMainWindow):
 
     def __init__(self, parent=None, arguments: dict = dict()):
         super().__init__()
-        self.setWindowTitle("Image Annotation Platform")
+        self.setWindowTitle("Sam Studio Editor")
         self.resize(1920, 1080)
 
         self.status_bar = self.statusBar()
@@ -142,6 +143,9 @@ class MainWindow(QMainWindow):
         )
         self.forward_button = QPushButton(">")
         self.forward_button.setFixedWidth(30)
+
+
+
         self.slider_layout.addWidget(self.back_button)
         self.slider_layout.addWidget(self.slider)
         self.slider_layout.addWidget(self.forward_button)
@@ -151,11 +155,32 @@ class MainWindow(QMainWindow):
         self.forward_button.pressed.connect(self.go_forward)
         self.slider.sliderMoved.connect(self.change_img_src)
 
+        self.frame_info = QHBoxLayout()
         # Filename label
         self.filename_label = QLabel("No file loaded")
         self.filename_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         self.filename_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(self.filename_label)
+
+        self.frame_index_edit = QLineEdit()
+        self.frame_range_validator = QIntValidator(0, 0, self)
+        self.frame_index_edit.setValidator(self.frame_range_validator)
+        self.frame_index_edit.textChanged.connect(self.show_image_by_index)
+        self.frame_index_edit.setFixedWidth(30)
+        self.frame_index_edit.setDisabled(True)
+        self.frame_index_edit.setVisible(False)
+        # self.frame_index_edit.setAlignment(Qt.AlignmentFlag.AlignRight)
+
+        self.slider.valueChanged.connect(lambda text: self.frame_index_edit.setText(str(text)))
+
+        self.total_frames = QLabel("")
+        # self.total_frames.setAlignment(Qt.AlignmentFlag.AlignRight)
+
+        self.frame_info.addWidget(self.filename_label)
+        self.frame_info.addStretch()
+        self.frame_info.addWidget(self.frame_index_edit)
+        self.frame_info.addWidget(self.total_frames)
+
+        layout.addLayout(self.frame_info)
 
         # Image viewer for displaying and interacting with images
         self.image_viewer = ImageViewer(self.color_dict)
@@ -546,6 +571,13 @@ class MainWindow(QMainWindow):
             if self.urls:
                 self.slider.setMaximum(len(self.urls) - 1)
                 self.slider.setValue(self.current_idx)
+                self.frame_index_edit.setVisible(True)
+                self.frame_index_edit.setEnabled(True)
+                self.frame_index_edit.setText("0")
+                
+                self.total_frames.setText("/  " + str(len(self.urls) - 1))
+                self.frame_range_validator.setTop(len(self.urls) - 1)
+                self.frame_index_edit.setValidator(self.frame_range_validator)
                 self.update_filename_label()
                 if (
                     self.loader_thread is not None and self.async_remote_loader is not None
@@ -575,6 +607,14 @@ class MainWindow(QMainWindow):
             # change slider data
             self.slider.setMaximum(len(self.urls) - 1)
             self.slider.setValue(self.current_idx)
+            self.frame_index_edit.setEnabled(True)
+            self.frame_index_edit.setVisible(True)
+            self.frame_index_edit.setText("0")
+                
+            self.total_frames.setText("/  " + str(len(self.urls) - 1))
+            self.frame_range_validator.setTop(len(self.urls) - 1)
+            self.frame_index_edit.setValidator(self.frame_range_validator)
+
             self.update_filename_label()
 
             self.load_images_local(self.urls[self.start_idx : self.end_idx])
@@ -696,11 +736,19 @@ class MainWindow(QMainWindow):
             self.load_annotations(self.current_idx)
             return 0
         return 1
+    
+    def show_image_by_index(self, text: Union[str,int]) -> None:
+        if text != "":
+            ret = self.change_img_src(int(text))
+            if ret == 0:
+                self.slider.setValue(self.current_idx)
+                self.frame_index_edit.setText(str(self.current_idx))
 
     def go_back(self):
         ret = self.change_img_src(self.current_idx - 1)
         if ret == 0:
             self.slider.setValue(self.current_idx)
+            self.frame_index_edit.setText(str(self.current_idx))
         # if self.current_idx > 0:
         #     self.current_idx -= 1
         #     if self.current_idx >= self.start_idx:
@@ -713,6 +761,7 @@ class MainWindow(QMainWindow):
         ret = self.change_img_src(self.current_idx + 1)
         if ret == 0:
             self.slider.setValue(self.current_idx)
+            self.frame_index_edit.setText(str(self.current_idx))
 
     def update_filename_label(self):
         if self.urls and 0 <= self.current_idx < len(self.urls):
