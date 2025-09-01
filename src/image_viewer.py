@@ -801,9 +801,9 @@ class ImageViewer(QGraphicsView):
             elif event.modifiers() & Qt.KeyboardModifier.ControlModifier:
                 self.key_control_pressed = True
                 # return to NORMAL mode
-            self.current_control = ControlItem.NORMAL
-            self.control_change.emit(ControlItem.NORMAL)
-            self.setCursor(Qt.CursorShape.ArrowCursor)
+                self.current_control = ControlItem.NORMAL
+                self.control_change.emit(ControlItem.NORMAL)
+                self.setCursor(Qt.CursorShape.ArrowCursor)
         if self.mode == "model":
             if event.key() == Qt.Key.Key_N:
                 self.prompt_star_coords.append([])

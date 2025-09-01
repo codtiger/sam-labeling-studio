@@ -62,7 +62,7 @@ def export_annotations_to_zip(
     json_filename = f"annotations/instances_{dataset_type}.json"
 
     with open(json_filename, "w") as f:
-        json.dump(coco_data, f, indent=4)
+        json.dump(coco_data, f, indent=0)
 
     output_zip_path = Path(output_zip_path)
     with zipfile.ZipFile(str(output_zip_path.with_suffix(".zip")), "w") as zipf:
