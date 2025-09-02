@@ -74,11 +74,11 @@ class MaskData(object):
     center: (x,y)
     """
 
-    def __init__(self, mask_id: int, points: list, label, center):
-        self.id = mask_id
-        self.points = points
-        self.label = label
-        self.center = center
+    def __init__(self, mask_id: int, points: list, label:str, center:list ):
+        self.id: int = mask_id
+        self.points: list[list] = points
+        self.label: str = label
+        self.center: list = center
 
 
 class ShapeDelegate(QStyledItemDelegate):

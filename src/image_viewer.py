@@ -317,18 +317,19 @@ class ImageViewer(QGraphicsView):
         self.polygon_items = []
         masks: list[MaskData] = []
         for mask in mask_arr:
-            qpoly = QPolygonF([QPointF(y, x) for x, y in mask])
+            qpoly = QPolygonF([QPointF(x, y) for x, y in mask])
             polygon_item = self.image_scene.addPolygon(
                 qpoly,
                 pen=QColor(*self.color_dict["background"]),
                 # brush=QBrush(QColor(0, 255, 0, 128)),
             )
             if polygon_item:
+                center = polygon_item.boundingRect().center()
                 mask_data = MaskData(
                     mask_id=self.mask_id,
                     points=[QPoint(x, y) for x, y in mask],
                     label="background",
-                    center=polygon_item.boundingRect().center(),
+                    center= [center.x(), center.y()],
                 )
                 masks.append(mask_data)
                 polygon_item.setData(0, self.mask_id)
@@ -351,7 +352,7 @@ class ImageViewer(QGraphicsView):
         return masks
 
     def update_candidate_mask(self, mask_id, new_mask: list[list]):
-        qpoly = QPolygonF([QPointF(coord[1], coord[0]) for coord in new_mask])
+        qpoly = QPolygonF([QPointF(coord[0], coord[1]) for coord in new_mask])
         self.object_lock.lockForRead()
         item = self.id_to_poly[mask_id]
         item.setPolygon(qpoly)
@@ -560,13 +561,14 @@ class ImageViewer(QGraphicsView):
                 item = self.image_scene.itemAt(pos, self.transform())
                 if isinstance(item, QGraphicsPolygonItem):
                     mask_id, label, vertices = item.data(0), item.data(1), item.data(2)
+                    center = item.boundingRect().center()
                     item.setBrush(QColor(*self.color_dict[label] + (50,)))
                     self.object_selected.emit(
                         MaskData(
                             mask_id=mask_id,
                             label=label,
                             points=[[v.x(), v.y()] for v in vertices],
-                            center=item.boundingRect().center(),
+                            center=[center.x(), center.y()]
                         )
                     )
                     # for vertex in item.data(2):
@@ -755,11 +757,12 @@ class ImageViewer(QGraphicsView):
                         self.image_scene.removeItem(ellipse)
                         polygon_item.setData(1, self.__last_label__)
 
+                    center = polygon_item.boundingRect().center()
                     mask_data = MaskData(
                         self.mask_id,
                         self.temp_points,
                         self.__last_label__,
-                        center=polygon_item.boundingRect().center(),
+                        center=[center.x(), center.y()]
                     )
                     self.object_added.emit(mask_data)
                     self.mask_id += 1
