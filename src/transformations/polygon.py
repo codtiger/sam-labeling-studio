@@ -11,6 +11,7 @@ class PolygonOffsetTransformation(BaseTransformation):
     def __init__(self, offset_x: float = 0.0, offset_y: float = 0.0, desc:str="poly_offset", **kwargs):
         super().__init__(transform_type="mask", name="PolygonOffset", 
                          offset_x=offset_x, offset_y=offset_y, **kwargs)
+        self._id_ = BaseTransformation.generate_id()
         self.offset_x = offset_x
         self.offset_y = offset_y
         self.description = desc
@@ -29,6 +30,10 @@ class PolygonOffsetTransformation(BaseTransformation):
             if "center" in object and object["center"]:
                 object["center"] = [object["center"][0] + self.offset_x, 
                                         object["center"][1] + self.offset_y]       
+    @property
+    def id(self):
+        """Return the unique identifier for this transformation."""
+        return self._id_
                 
     def reset(self, objects: list[dict]):
         """
@@ -42,6 +47,6 @@ class PolygonOffsetTransformation(BaseTransformation):
             if "center" in object and object["center"]:
                 object["center"] = [object["center"][0] - self.offset_x, 
                                         object["center"][1] - self.offset_y]
-    
+
     def __str__(self, ):
         return f"PolygonOffset ΔX: {self.offset_x}  ΔY: {self.offset_y},{self.description})"

@@ -29,6 +29,7 @@ from PyQt6.QtCore import (
     QPoint,
     QThread,
     pyqtSignal,
+    QMutex
 )
 from PIL import Image
 from PyQt6.QtGui import (
@@ -68,7 +69,7 @@ logger = get_logger("Main UI")
 
 
 class MainWindow(QMainWindow):
-    MEMORY_LIMIT = 200  # in megabytes
+    MEMORY_LIMIT = 200 * 1024 # in megabytes
     MAX_PARALLEL_REQUESTS = 10
 
     trigger_embbeding = pyqtSignal(bytes)
@@ -79,6 +80,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("Sam Studio Editor")
         self.resize(1920, 1080)
+        self.setAcceptDrops(True)       
 
         self.status_bar = self.statusBar()
         if self.status_bar:
@@ -189,9 +191,11 @@ class MainWindow(QMainWindow):
 
         # Image viewer for displaying and interacting with images
         self.image_viewer = ImageViewer(self.color_dict)
+        self.image_viewer.setAcceptDrops(False)
+
         layout.addWidget(self.image_viewer)
         self.image_viewer.setMouseTracking(True)
-        self.image_viewer.setEnabled(False)
+        self.image_viewer.setEnabled(True)
 
         central_widget.setLayout(layout)
         self.setCentralWidget(central_widget)
@@ -364,8 +368,8 @@ class MainWindow(QMainWindow):
 
 
         self.transformations_list = QListWidget()
-        self.active_transformations = []
-        self.disabled_transformations = []  # {frame_idx: [ {dx, dy, description}, ... ] }
+        self.active_transformations = {}
+        self.disabled_transformations = {}  
 
         self.transformation_btn_layout = QHBoxLayout()
         
@@ -375,7 +379,7 @@ class MainWindow(QMainWindow):
         self.disable_transformation_btn = QPushButton("Disable")
         self.add_transformation_btn.clicked.connect(self.add_transformation_dialog)
         self.remove_transformation_btn.clicked.connect(self.remove_selected_transformation)
-        self.enable_transformation_btn.clicked.connect(self.enabled_selected_transformation)
+        self.enable_transformation_btn.clicked.connect(self.enable_selected_transformation)
         self.disable_transformation_btn.clicked.connect(self.disable_selected_transformation)
         
         self.transformation_btn_layout.addWidget(self.add_transformation_btn)
@@ -424,7 +428,7 @@ class MainWindow(QMainWindow):
             self.load_url_action = QAction("Load URL List", self)
             self.load_images_action = QAction("Load Images", self)
             self.load_url_action.triggered.connect(self.load_url_list)
-            self.load_images_action.triggered.connect(self.load_image_list)
+            self.load_images_action.triggered.connect(lambda event: self.load_image_list())
             self.file_menu.addAction(self.load_url_action)
             self.file_menu.addAction(self.load_images_action)
             # Export / Import actions
@@ -479,6 +483,7 @@ class MainWindow(QMainWindow):
         # async loader
         self.async_remote_loader = None
         self.loader_thread: Optional[QThread] = None
+        self.draw_mutex = QMutex()
         # Data storage
         self.prev_selected_obj_idx = None
         self.data_source = DataSource.LOCAL
@@ -520,7 +525,7 @@ class MainWindow(QMainWindow):
         self.model_worker.image_embedded.connect(self.on_image_embedded)
         self.model_worker.prediction_ready.connect(self.on_model_result)
         self.model_worker.connection_failed.connect(self.show_api_warning)
-        self.model_worker.connection_ok.connect(self.show_api_ok)
+        self.model_worker.connection_ok.connect(self.on_api_ready)
 
         self.trigger_check_connection.connect(self.model_worker.check_connection)
         self.trigger_embbeding.connect(self.model_worker.post_image)
@@ -528,10 +533,6 @@ class MainWindow(QMainWindow):
 
         self.trigger_check_connection.emit()
         self.model_thread.start()
-
-    def on_model_ready(self):
-        logger.warning("MODEL LOADED")
-        self.model_loaded = True
 
     def on_image_embedded(self, uuid: str):
         self.embed_id = uuid
@@ -629,17 +630,17 @@ class MainWindow(QMainWindow):
         if dialog.exec():
             dx, dy, desc = dialog.get_values()
             offset_transform = PolygonOffsetTransformation(dx, dy, desc)
-            self.active_transformations.append(offset_transform)
+            self.active_transformations[offset_transform.id] = offset_transform
             item = QListWidgetItem()
             item.setText(f"{str(offset_transform)}")
-            item.setData(Qt.ItemDataRole.UserRole, len(self.active_transformations))
+            item.setData(Qt.ItemDataRole.UserRole, offset_transform.id)
+            item.setData(Qt.ItemDataRole.UserRole + 1, True) # active state 
             self.transformations_list.addItem(item)
-            self.apply_transformation_to_annotations(apply_last=True, update_viewer=True)
-    
-    def remove_transformations_list(self):
-        pass
+            self.apply_transformation_to_annotations(transform_id=offset_transform.id,
+                                                     update_viewer=True)
 
-    def apply_transformation_to_annotations(self, apply_last:bool=False, update_viewer:bool=True):
+    def apply_transformation_to_annotations(self, transform_id:Optional[int]=None,
+                                            update_viewer:bool=True):
         """
         Apply transformation to polygons in both annotations and on screen.
                 param apply_last: if True, only apply the last transformation in the list.
@@ -648,12 +649,12 @@ class MainWindow(QMainWindow):
         """
         url = self.urls[self.current_idx]
         # Update annotation data
-        if apply_last:
-            if isinstance(self.active_transformations[-1], PolygonOffsetTransformation):
-                transform = self.active_transformations[-1]
+        if transform_id:
+            if isinstance(self.active_transformations[transform_id], PolygonOffsetTransformation):
+                transform = self.active_transformations[transform_id]
                 transform.apply(self.annotations[url]["objects"])
-        elif not apply_last:
-            for transform in self.active_transformations:
+        else:
+            for t_id, transform in self.active_transformations.items():
                 if isinstance(transform, PolygonOffsetTransformation):
                     transform.apply(self.annotations[url]["objects"])
         # Update polygons on screen
@@ -663,7 +664,8 @@ class MainWindow(QMainWindow):
 
         self.is_transformed[self.current_idx] = True
 
-    def reset_transformation_on_annotations(self, transformation:BaseTransformation, update_viewer:bool=True):
+    def reset_transformation_on_annotations(self, transformation:BaseTransformation,
+                                             update_viewer:bool=True):
         """
         Reset transformation on polygons in both annotations and on screen.
                 param transformation: the transformation to reset.
@@ -678,52 +680,65 @@ class MainWindow(QMainWindow):
                 self.image_viewer.update_candidate_mask(obj["id"], obj["polygon"])
 
     def remove_selected_transformation(self):
-        rows = map(lambda x: x.row(), self.transformations_list.selectedIndexes())
-        url = self.urls[self.current_idx]
-        for row in rows:
-            transformation = self.active_transformations.pop(row)
-            if self.annotations.get(url, None) is not None:
-                self.reset_transformation_on_annotations(transformation, update_viewer=True)
-            self.transformations_list.takeItem(row)
+        selected_items = self.transformations_list.selectedItems()
 
-    def enabled_selected_transformation(self, row):
+        for item in selected_items:
+            transform_id = item.data(Qt.ItemDataRole.UserRole)
+            active_state = item.data(Qt.ItemDataRole.UserRole + 1)
+            if active_state:
+                transformation = self.active_transformations.pop(transform_id, None)
+                self.reset_transformation_on_annotations(transformation, update_viewer=True)
+            else:
+                _ = self.disabled_transformations.pop(transform_id, None)
+                
+            self.transformations_list.takeItem(self.transformations_list.row(item))
+
+    def enable_selected_transformation(self, event):
         """
             Enable a disabled transformation and re-apply it to the annotations.
             param row: the index of the transformation in the disabled list.
         """
-        if row < 0 or row >= len(self.disabled_transformations):
-            return
-        transformation_dict = self.disabled_transformations.pop(row)
-        for _, transformation in transformation_dict.items():
-            self.active_transformations.append(transformation)
-            self.apply_transformation_to_annotations(apply_last=True, update_viewer=True)
-            item = self.transformations_list.item(row)
-            font = item.font()
-            font.setStrikeOut(False)
-            item.setFont(font)
+        items = self.transformations_list.selectedItems()
+        for item in items:
+            transform_id, active_state = item.data(Qt.ItemDataRole.UserRole), \
+                                         item.data(Qt.ItemDataRole.UserRole + 1)
+            if not active_state:
+                transformation = self.disabled_transformations.pop(transform_id, None)
+                self.active_transformations[transform_id]= transformation
+                item.setData(Qt.ItemDataRole.UserRole + 1, True)
+                self.apply_transformation_to_annotations(transform_id=transform_id,
+                                                         update_viewer=True)
+                font = item.font()
+                font.setStrikeOut(False)
+                item.setFont(font)
 
     def disable_selected_transformation(self, row):
-        if row < 0 or row >= len(self.active_transformations):
-            return
-        transformation = self.active_transformations.pop(row)
-        self.disabled_transformations.append({self.current_idx: transformation})
-        self.reset_transformation_on_annotations(transformation, update_viewer=True)
-        # gray out the item in the list
-        item = self.transformations_list.item(row)
-        font = item.font()
-        font.setStrikeOut(True)
-        item.setFont(font)
+        items = self.transformations_list.selectedItems()
+        for item in items:
+            transform_id, active_state = item.data(Qt.ItemDataRole.UserRole), \
+                                         item.data(Qt.ItemDataRole.UserRole + 1)
+            if active_state:
+                transformation = self.active_transformations.pop(transform_id, None)
+                self.disabled_transformations[transformation.id]= transformation
+                item.setData(Qt.ItemDataRole.UserRole + 1, False)
+                self.reset_transformation_on_annotations(transformation, update_viewer=True)
+                # gray out the item in the list
+                item = self.transformations_list.item(row)
+                font = item.font()
+                font.setStrikeOut(True)
+                item.setFont(font)
 
-    def load_image_list(self):
-        image_files, _ = QFileDialog.getOpenFileNames(
-            self,
-            "Select Images",
-            str(self.last_directory),
-            "Images (*.png *.jpg)",
-            **self.__file_dialog_kwargs__,
-        )
-        if image_files:
-            self.urls = image_files
+    def load_image_list(self, from_dialog=True, image_paths:Optional[List[PathLike]]=None):
+        if from_dialog:
+            image_paths, _ = QFileDialog.getOpenFileNames(
+                self,
+                "Select Images",
+                str(self.last_directory),
+                "Images (*.png *.jpg)",
+                **self.__file_dialog_kwargs__,
+            )
+        if image_paths:
+            self.urls = image_paths
             self.images = [None] * self.MEMORY_LIMIT
             self.is_transformed = [False] * len(self.urls)
             # if user rushes to select new files or urls, this should be set to None
@@ -763,7 +778,7 @@ class MainWindow(QMainWindow):
             self.annotations = coco.import_annotations_from_zip(
                 input_zip_path=self.zip_path, urls=self.urls, dataset_type="Train"
             )
-            self.load_frame_annotation(self.current_idx)
+            self.draw_frame_annotations()
 
     def show_label_combobox(self):
         """Show a QComboBox with labels at the mouse position."""
@@ -804,16 +819,35 @@ class MainWindow(QMainWindow):
     def on_image_load_error(self, url, error):
         logger.error(f"Failed to load image: {url} ; Error: {error}")
 
+    # def interrupt_loader_thread(self):
+    #     if 
     def load_images_local(self, paths):
-        self.local_thread = LocalImageLoader(paths, self.images)
-        self.local_thread.image_loaded.connect(self.load_viewer)
-        self.local_thread.start()
+
+        self.worker_load_local = LocalImageLoader(paths, self.images)
+        self.worker_load_local.image_loaded.connect(self.load_viewer)
+        self.worker_load_local.finished.connect(self.on_loader_finished)
+
+        self.loader_thread = QThread()
+        self.loader_thread.setObjectName("LocalImageLoaderThread")
+
+        self.loader_thread.started.connect(self.worker_load_local.run)
+        self.loader_thread.finished.connect(self.loader_thread.deleteLater)
+        self.loader_thread.finished.connect(self.worker_load_local.deleteLater)
+
+        self.worker_load_local.moveToThread(self.loader_thread)
+        self.loader_thread.start()
+
+    def on_loader_finished(self):
+        self.loader_thread.quit()
+        self.loader_thread.wait()
+        self.loader_thread = None
 
     def load_viewer(self, image: bytes):
         """Handle the loaded image by displaying it."""
+        self.draw_mutex.lock()
         self.image_viewer.setEnabled(False)
-        self.current_image = Image.open(io.BytesIO(image))
-        qimage = pil_to_qimage(self.current_image)
+        self.current_image = image
+        qimage = pil_to_qimage(Image.open(io.BytesIO(image)))
         pixmap = QPixmap.fromImage(qimage)
         self.image_viewer.clear()
         self.object_list.clearSelection()
@@ -826,8 +860,11 @@ class MainWindow(QMainWindow):
             self.model_thread.start()
         # Load the embedding
         if self.model_loaded:
-          self.trigger_embbeding.emit(image)
+          self.trigger_embbeding.emit(self.current_image)
         self.prev_selected_obj_idx = None
+
+        self.draw_frame_annotations()
+        self.draw_mutex.unlock()
 
     def change_img_src(self, index):
         if 0 <= index < len(self.urls) and index != self.current_idx:
@@ -839,14 +876,17 @@ class MainWindow(QMainWindow):
             self.run_model_action.setEnabled(False)
 
             if (self.current_idx >= self.start_idx) and (self.current_idx < self.end_idx):
-                self.load_viewer(self.images[self.current_idx % MainWindow.MEMORY_LIMIT])
+                self.load_viewer(self.images[(self.current_idx - self.start_idx) % MainWindow.MEMORY_LIMIT])
             elif self.current_idx >= self.end_idx:
                 self.start_idx, self.end_idx = (
                     self.current_idx,
                     self.current_idx + MainWindow.MEMORY_LIMIT,
                 )
                 if self.data_source == DataSource.LOCAL:
+                    if self.loader_thread is not None and self.loader_thread.isRunning():
+                        self.loader_thread.requestInterruption()
                     self.load_images_local(self.urls[self.start_idx : self.end_idx])
+
                 elif self.data_source == DataSource.URL_REQUEST:
                     self.load_image_from_url(self.urls[self.start_idx : self.end_idx])
             elif self.current_idx < self.start_idx:
@@ -857,10 +897,13 @@ class MainWindow(QMainWindow):
                     self.current_idx + MainWindow.MEMORY_LIMIT,
                 )
                 if self.data_source == DataSource.LOCAL:
+                    if self.loader_thread is not None and self.loader_thread.isRunning():
+                        self.loader_thread.requestInterruption()
                     self.load_images_local(self.urls[self.start_idx : self.end_idx])
+
                 elif self.data_source == DataSource.URL_REQUEST:
                     self.load_image_from_url(self.urls[self.start_idx : self.end_idx])
-            self.load_frame_annotation(self.current_idx)
+
             return 0
         return 1
     
@@ -927,7 +970,16 @@ class MainWindow(QMainWindow):
 
     def delete_object(self, item: QListWidgetItem, mask_id: int):
         self.image_viewer.removePolygon(item.data(Qt.ItemDataRole.UserRole).id)
+
+        if self.annotations.get(self.urls[self.current_idx], None):
+            self.annotations[self.urls[self.current_idx]]["objects"] = list(
+                filter(
+                    lambda obj: obj["id"] != item.data(Qt.ItemDataRole.UserRole).id,
+                    self.annotations[self.urls[self.current_idx]]["objects"],
+                )
+            )
         self.object_list.takeItem(self.object_list.row(item))
+       
 
     def change_object_label(self, item: QListWidgetItem, label_text):
         self.image_viewer.changePolygonLabel(item.data(Qt.ItemDataRole.UserRole).id, label_text)
@@ -954,7 +1006,8 @@ class MainWindow(QMainWindow):
         item.setBackground(QColor(*self.color_dict[shape_dict.label] + (50,)))
         self.object_list.addItem(item)
         custom_widget.deleted.connect(partial(self.delete_object, item))
-        # custom_widget.visibility_changed.connect(lambda i:)
+        custom_widget.visibility_changed.connect(lambda toggle:
+                                                 self.image_viewer.toggle_poly_visibility(shape_dict.id))
         self.object_list.setItemWidget(item, custom_widget)
 
         custom_widget.label_combo_box.currentTextChanged.connect(
@@ -1042,13 +1095,13 @@ class MainWindow(QMainWindow):
         self.annotations[image_url] = {"objects": objects}
         self.current_idx += 1
 
-    def load_frame_annotation(self, index):
-        anno = self.annotations.get(self.urls[index], None)
+    def draw_frame_annotations(self):
+        anno = self.annotations.get(self.urls[self.current_idx], None)
         if anno:
             mask_data_list = []
             # for obj in anno["objects"]:
-            if not self.is_transformed[index]:
-                self.apply_transformation_to_annotations(apply_last=False, update_viewer=False)
+            if not self.is_transformed[self.current_idx]:
+                self.apply_transformation_to_annotations(update_viewer=False)
                     # for transform in self.active_transformations:
                     #     if isinstance(transform, PolygonOffsetTransformation):
                     #         dx, dy = transform.offset_x, transform.offset_y
@@ -1092,11 +1145,13 @@ class MainWindow(QMainWindow):
             # Optionally, apply settings immediately or save to config
             logger.info(f"Updated settings: {self.settings}")
 
-    def show_api_ok(self, message="Ready"):
+    def on_api_ready(self, message="Ready"):
         self.model_loaded = True
         self.status_label.setText(
                 f'<span style="color:#d9534f;vertical-align:middle;"></span>✅{message}'
             )
+        if self.current_image is not None and self.image_viewer.isEnabled():
+            self.trigger_embbeding.emit(self.current_image)
     
     def show_api_warning(self, message="API connection failed!"):
         # Clear previous widgets
@@ -1106,13 +1161,42 @@ class MainWindow(QMainWindow):
             )
             self.status_label.setContentsMargins(0, 0, 8, 0)
 
+    
+    def dragEnterEvent(self, event):
+        if event.mimeData().hasUrls() or event.mimeData().hasImage():
+            event.setAccepted(True)
+            self.setCursor(Qt.CursorShape.DragCopyCursor)
+        return super().dragEnterEvent(event)
+    
+    def dragLeaveEvent(self, event):
+        event.setAccepted(True)
+        self.setCursor(Qt.CursorShape.ArrowCursor)
+        return super().dragLeaveEvent(event)
+    
+    def dragMoveEvent(self, event):
+        if event.mimeData().hasUrls() or event.mimeData().hasImage():
+            event.setAccepted(True)
+            self.setCursor(Qt.CursorShape.DragCopyCursor)
+        return super().dragMoveEvent(event)
+    
+    def dropEvent(self, event):
+        if event.mimeData().hasImage():
+            print (event.mimeData().imageData())
+        if event.mimeData().hasUrls():
+            urls = event.mimeData().urls()
+            image_paths = [url.toLocalFile() for url in urls if url.isLocalFile()]
+            self.load_image_list(from_dialog=False, image_paths=image_paths)
+            
+        event.setAccepted(True)
+        self.setCursor(Qt.CursorShape.ArrowCursor)
+        return super().dropEvent(event)
     # ----- Toolbar action slots ------------ #
     def refresh_connection(self):
         if hasattr(self, "model_worker"):
             self.status_label.setText('<span style="color:#1E90FF;">🔄 Checking API connection...</span>')
             self.trigger_check_connection.emit()
-            if self.current_image is not None and self.model_loaded and self.image_viewer.isEnabled():
-                self.trigger_embbeding.emit()
+            # if self.current_image is not None and self.model_loaded and self.image_viewer.isEnabled():
+            #     self.trigger_embbeding.emit()
 
     def close(self):
         if hasattr(self, "model_thread"):

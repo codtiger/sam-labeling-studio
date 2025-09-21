@@ -2,7 +2,7 @@ import sys
 import argparse
 
 from PyQt6.QtWidgets import QApplication
-from PyQt6.QtGui import QPalette, QColor, QIcon
+from PyQt6.QtGui import QPalette, QColor, QIcon, QPixmap
 
 from src.ui import MainWindow
 from src.startup import get_or_create_project, Project
@@ -67,7 +67,8 @@ def parse_args():
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     app.setApplicationName("Sam Labeling Studio")
-    icon = QIcon("assets/samstudio.ico")
+    change_title()
+    icon = QIcon(QPixmap("assets/samstudio_logo_only.svg"))
     app.setWindowIcon(icon)
     apply_dark_theme(app)
     args = vars(parse_args())
@@ -76,5 +77,4 @@ if __name__ == "__main__":
     window = MainWindow(arguments=args)
     window.setWindowTitle("Sam Labeling Studio")
     window.show()
-    change_title()
     sys.exit(app.exec())
