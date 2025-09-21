@@ -189,6 +189,8 @@ class ImageViewer(QGraphicsView):
         self.mode = mode
         if self.mode == "manual" and self.image_item:
             self.image_item.setOpacity(1.0)
+            self.set_control(ControlItem.NORMAL)
+            self.cursor().setShape(Qt.CursorShape.ArrowCursor)
         elif self.mode == "model" and self.image_item:
             self.image_item.setOpacity(0.4)
         self.control_change.emit(ControlItem.NORMAL)
@@ -265,6 +267,7 @@ class ImageViewer(QGraphicsView):
     def clear(self):
         """Clear all annotations and reset the scene."""
         self.object_lock.lockForWrite()
+        self.clear_prompts()
         self.image_scene.clear()
         self.image_item = None
         self.id_to_poly = {}
@@ -285,9 +288,12 @@ class ImageViewer(QGraphicsView):
         self.polygon_items = []
         for mask_data in mask_data_list:
             qpoly = QPolygonF([QPointF(x, y) for x, y in mask_data.points])
+            pen = QColor(*self.color_dict[mask_data.label])
+            pen.setWidthF(2.0)
+            pen.setCosmetic(True)
             polygon_item = self.image_scene.addPolygon(
                 qpoly,
-                pen=QColor(*self.color_dict[mask_data.label]),
+                pen=pen,
                 # brush=QBrush(QColor(0, 255, 0, 128)),
             )
             if polygon_item:
@@ -298,7 +304,7 @@ class ImageViewer(QGraphicsView):
                 self.polygon_items.append(polygon_item)
                 # Add movable vertices
                 for i, point in enumerate(qpoly):
-                    vertex_item = VertexItem(0, 0, 10, 10)
+                    vertex_item = VertexItem(0, 0, 15, 15)
                     vertex_item.setPos(point.x() - 3, point.y() - 3)
                     vertex_item.setBrush(QColor(*self.color_dict[mask_data.label]))
                     vertex_item.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable)
@@ -316,19 +322,23 @@ class ImageViewer(QGraphicsView):
         #     self.image_item.setOpacity(0.5)
         self.polygon_items = []
         masks: list[MaskData] = []
+        pen = QPen(QColor(*self.color_dict["background"]))
+        pen.setWidthF(2.0)
+        pen.setCosmetic(True)
         for mask in mask_arr:
-            qpoly = QPolygonF([QPointF(y, x) for x, y in mask])
+            qpoly = QPolygonF([QPointF(x, y) for x, y in mask])
             polygon_item = self.image_scene.addPolygon(
                 qpoly,
-                pen=QColor(*self.color_dict["background"]),
+                pen=pen,
                 # brush=QBrush(QColor(0, 255, 0, 128)),
             )
             if polygon_item:
+                center = polygon_item.boundingRect().center()
                 mask_data = MaskData(
                     mask_id=self.mask_id,
                     points=[QPoint(x, y) for x, y in mask],
                     label="background",
-                    center=polygon_item.boundingRect().center(),
+                    center= [center.x(), center.y()],
                 )
                 masks.append(mask_data)
                 polygon_item.setData(0, self.mask_id)
@@ -338,7 +348,7 @@ class ImageViewer(QGraphicsView):
                 self.id_to_poly[self.mask_id] = polygon_item
                 # Add movable vertices
                 for i, point in enumerate(qpoly):
-                    vertex_item = VertexItem(0, 0, 10, 10)
+                    vertex_item = VertexItem(0, 0, 15, 15)
                     vertex_item.setPos(point.x() - 3, point.y() - 3)
                     vertex_item.setBrush(QColor(*self.color_dict["background"]))
                     vertex_item.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable)
@@ -349,9 +359,22 @@ class ImageViewer(QGraphicsView):
                 polygon_item.setData(2, vertices)
                 self.mask_id += 1
         return masks
+    
+    def toggle_poly_visibility(self, mask_id):
+        self.object_lock.lockForRead()
+        item = self.id_to_poly[mask_id]
+        if item.isVisible():
+            item.setVisible(False)
+            for vertex_item in item.data(2):
+                vertex_item.setVisible(False)
+        else:
+            item.setVisible(True)
+            for vertex_item in item.data(2):
+                vertex_item.setVisible(True)
+        self.object_lock.unlock()
 
     def update_candidate_mask(self, mask_id, new_mask: list[list]):
-        qpoly = QPolygonF([QPointF(coord[1], coord[0]) for coord in new_mask])
+        qpoly = QPolygonF([QPointF(coord[0], coord[1]) for coord in new_mask])
         self.object_lock.lockForRead()
         item = self.id_to_poly[mask_id]
         item.setPolygon(qpoly)
@@ -363,7 +386,7 @@ class ImageViewer(QGraphicsView):
                 vertex_item = None
             vertices = []
             for i, point in enumerate(qpoly):
-                vertex_item = VertexItem(0, 0, 10, 10)
+                vertex_item = VertexItem(0, 0, 15, 15)
                 vertex_item.setPos(point.x() - 3, point.y() - 3)
                 vertex_item.setBrush(old_brush)
                 vertex_item.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable)
@@ -409,7 +432,9 @@ class ImageViewer(QGraphicsView):
         item: Optional[QGraphicsPolygonItem] = self.id_to_poly[mask_id]
         if item:
             item.setData(1, label)
-            item.setPen(QColor(*self.color_dict[item.data(1)]))
+            pen = item.pen()
+            pen.setColor(QColor(*self.color_dict[item.data(1)]))
+            item.setPen(pen)
             item.setBrush(Qt.GlobalColor.transparent)
             for vertex_item in item.data(2):
                 vertex_item.setBrush(QBrush(QColor(*self.color_dict[item.data(1)])))
@@ -514,10 +539,12 @@ class ImageViewer(QGraphicsView):
                 self.image_scene.removeItem(self.temp_polygon)
 
             temp_poly = QPolygonF(self.temp_points + [pos])
+            pen = QPen(QColor(*self.color_dict[self.__last_label__] + (128,)))
+            pen.setWidthF(2.0)
+            pen.setCosmetic(True)
             self.temp_polygon = self.image_scene.addPolygon(
                 temp_poly,
-                pen=QPen(Qt.GlobalColor.black),
-                brush=QBrush(QColor(*self.color_dict[self.__last_label__] + (50,))),
+                pen=pen,
             )
         else:
             if self.dragging_polygon:
@@ -560,13 +587,14 @@ class ImageViewer(QGraphicsView):
                 item = self.image_scene.itemAt(pos, self.transform())
                 if isinstance(item, QGraphicsPolygonItem):
                     mask_id, label, vertices = item.data(0), item.data(1), item.data(2)
+                    center = item.boundingRect().center()
                     item.setBrush(QColor(*self.color_dict[label] + (50,)))
                     self.object_selected.emit(
                         MaskData(
                             mask_id=mask_id,
                             label=label,
                             points=[[v.x(), v.y()] for v in vertices],
-                            center=item.boundingRect().center(),
+                            center=[center.x(), center.y()]
                         )
                     )
                     # for vertex in item.data(2):
@@ -647,10 +675,13 @@ class ImageViewer(QGraphicsView):
             if len(self.temp_points) >= 2:
                 pos = self.mapToScene(event.pos())
                 temp_poly = QPolygonF(self.temp_points + [pos])
+                pen = QPen(QColor(*self.color_dict[self.__last_label__] + (128,)))
+                pen.setWidthF(2.0)
+                pen.setCosmetic(True)
                 self.temp_polygon = self.image_scene.addPolygon(
                     temp_poly,
-                    pen=QPen(Qt.GlobalColor.black),
-                    brush=QBrush(QColor(*self.color_dict[self.__last_label__] + (50,))),
+                    pen=pen,
+                    # brush=QBrush(QColor(*self.color_dict[self.__last_label__] + (50,))),
                 )
         return super().mouseReleaseEvent(event)
 
@@ -736,10 +767,12 @@ class ImageViewer(QGraphicsView):
 
                     # Create final polygon
                     final_poly = QPolygonF(self.temp_points)
+                    pen = QPen(QColor(*self.color_dict[self.__last_label__]))
+                    pen.setWidthF(2.0)
+                    pen.setCosmetic(True) 
                     polygon_item = self.image_scene.addPolygon(
                         final_poly,
-                        pen=QPen(QColor(*self.color_dict[self.__last_label__])),
-                        # brush=QBrush(QColor(255, 255, 0, 128)),
+                        pen=pen,
                     )
                     if polygon_item:
                         polygon_item.setData(0, self.mask_id)
@@ -755,11 +788,12 @@ class ImageViewer(QGraphicsView):
                         self.image_scene.removeItem(ellipse)
                         polygon_item.setData(1, self.__last_label__)
 
+                    center = polygon_item.boundingRect().center()
                     mask_data = MaskData(
                         self.mask_id,
                         self.temp_points,
                         self.__last_label__,
-                        center=polygon_item.boundingRect().center(),
+                        center=[center.x(), center.y()]
                     )
                     self.object_added.emit(mask_data)
                     self.mask_id += 1

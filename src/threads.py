@@ -1,10 +1,9 @@
-from PyQt6.QtCore import QObject, QThread, pyqtSignal, QMutex
+from PyQt6.QtCore import QObject, QThread, pyqtSignal, QMutex, pyqtSlot
 
 import aiohttp
 import asyncio
 
 from src.utils import get_logger
-
 
 class AsyncRemoteImageLoader(QObject):
     """Thread to load remote images asynchronously"""
@@ -77,10 +76,11 @@ class AsyncRemoteImageLoader(QObject):
             self.loop.close()
 
 
-class LocalImageLoader(QThread):
+class LocalImageLoader(QObject):
     """Thread to open images locally in batches"""
 
     image_loaded = pyqtSignal(bytes)
+    finished = pyqtSignal()
 
     def __init__(self, image_paths: list, image_list: list):
         # self.condition = QWaitCondition()
@@ -88,21 +88,30 @@ class LocalImageLoader(QThread):
         super().__init__()
         self.paths = image_paths
         self.index = 0
+        self.interrupt = False
         # self.background_load_num = min(background_load_num, len(image_paths))
         self.image_list = image_list
 
+    @pyqtSlot()
     def run(self):
         with open(self.paths[0], "rb") as f:
             self.image_list[0] = f.read()
         self.image_loaded.emit(self.image_list[0])
         self.mutex.lock()
         for idx in range(1, len(self.paths)):
+            if QThread.currentThread().isInterruptionRequested():
+                break
             with open(self.paths[idx], "rb") as f:
                 self.image_list[idx] = f.read()
         # self.condition.wait(self.mutex)
         self.mutex.unlock()
+        self.finished.emit()
 
     def wake_up(self):
         self.mutex.lock()
         # self.condition.wakeOne()
         self.mutex.unlock()
+
+    @pyqtSlot()
+    def stop(self):
+        self.interrupt = True

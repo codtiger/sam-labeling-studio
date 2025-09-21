@@ -190,7 +190,7 @@ async def predict_on_image(
                 # best_mask = preds[confids.argmax()]
                 preds_filtered = preds[confids >= 0.1]
                 polygons = [
-                    get_convex_hull(mask, k=k).astype(np.int32).tolist() for mask in preds_filtered
+                    get_convex_hull(mask, k=k)[:,::-1].astype(np.int32).tolist() for mask in preds_filtered
                 ]
                 # polygon = get_convex_hull(
                 #   best_mask
